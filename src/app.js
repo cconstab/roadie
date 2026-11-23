@@ -40,7 +40,8 @@ async function loadSdk() {
   }
 }
 
-export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {} }) {
+// updater: { check(), apply(tag), stop() } from main.js; left out in tests, so they never go looking for releases.
+export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {}, updater = null }) {
   const token = crypto.randomBytes(24).toString('base64url'); // per run; proves a request came from Roadie's own page
   // The page (and so the token) is only given to a browser that arrived with this
   // key, which is in the link Roadie prints and opens at start. That browser gets a
@@ -59,6 +60,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
   let port = null;
   let checks = [];
+  let update = null; // a newer release, when there is one: see update.js
+  let updateTimer = null;
   let site = null; // { key, owner, repo, dir, branch, defaultBranch, note, settings, notes, saved }
   let watcher = null;
   let busy = null; // short text while a long step runs
@@ -79,6 +82,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     const running = s.state === 'running';
     return {
       checks,
+      update,
       busy,
       site: site && { ...site },
       starterFiles: starterFileList(),
@@ -310,6 +314,16 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       pushState();
       return snapshot();
     },
+    // Install the newer release the interface is showing. Only ever started by this button.
+    'POST /api/update': async () => {
+      if (!updater || !update) throw new Error('There is no update to install.');
+      if (!update.installed) throw new Error(update.how);
+      const result = await updater.apply(update.latest);
+      update = null;
+      pushState();
+      setTimeout(() => updater.stop?.(), 800).unref(); // after this answer has gone out
+      return result;
+    },
     // Ask a local Ollama which models it has.
     'POST /api/ai/models': async (body) => {
       const { ollamaUrl } = cleanAi({ ollamaUrl: body.ollamaUrl });
@@ -426,6 +440,13 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       // Site code (tests, the preview server, install scripts) is kept away from Roadie itself.
       protectRoadie({ ports: [port, proxyPort], files: [config.file] });
       checks = await gitops.checkTools();
+      // Look for a newer release now and twice a day, without holding up the start.
+      if (updater) {
+        const look = () => updater.check().then((found) => { update = found; pushState(); }).catch(() => {});
+        look();
+        updateTimer = setInterval(look, 12 * 60 * 60_000);
+        updateTimer.unref();
+      }
       if (!sandboxAvailable()) {
         checks.push({
           id: 'sandbox', ok: false,
@@ -438,6 +459,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     address() { return server.address(); },
     async close() {
       clearInterval(ping);
+      clearInterval(updateTimer);
       flow.stop();
       endChat();
       watcher?.close();

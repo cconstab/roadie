@@ -8,6 +8,29 @@ machine without a click.
 
 ![Roadie: chat on the left, live preview in the middle, changed files on the right](docs/roadie.png)
 
+## How a change flows
+
+```mermaid
+flowchart LR
+  subgraph machine["On your machine"]
+    chat["Chat with the AI"] --> edits["AI edits the site's files"]
+    edits --> preview["Live preview"]
+    preview -- "not right yet" --> chat
+    preview --> tests["Run tests"]
+  end
+  subgraph github["On GitHub, one click at a time"]
+    pr["Open pull request"] --> ci["CI checks"]
+    ci --> merge["Merge"]
+    merge --> staging["Staging site"]
+    staging --> release["Release"]
+    release --> production["Production site"]
+  end
+  tests --> pr
+```
+
+Everything in the left box stays on your machine. Each step in the right box
+happens only when you press its button and confirm what it will do.
+
 ## Install
 
 Roadie runs on macOS, Linux and Windows. The download includes everything Roadie
@@ -27,9 +50,21 @@ Windows, in PowerShell:
 irm https://github.com/cconstab/roadie/releases/latest/download/install.ps1 | iex
 ```
 
-Then start it with `roadie`. The installer checks the download against the
-release's checksums and refuses it if they differ. Running it again updates
-Roadie; your sites and settings (in `~/roadie`) are left alone. To remove
+Then start it with `roadie`. The installer:
+
+- checks the download against the release's checksums and refuses it if they differ;
+- looks for the other things Roadie needs (below) and offers to install what is
+  missing, with Homebrew, your Linux package manager or winget. It shows the
+  exact command and waits for your yes. It also offers to sign `gh` in.
+- can be run again at any time to update Roadie. Your sites and settings (in
+  `~/roadie`) are left alone, and the old copy is kept until the new one is in place.
+
+**Updates.** When a newer release is out, Roadie says so at the top of its
+window, with an **Update** button. Nothing is installed until you press it and
+confirm; Roadie then replaces itself and stops, and you start it again. To see
+whether there is a newer release, Roadie asks github.com for the address of the
+latest one when it starts and twice a day; that request says nothing about you
+or your sites. Set `ROADIE_NO_UPDATE_CHECK=1` to turn it off. To remove
 Roadie, delete `~/.local/share/roadie` and `~/.local/bin/roadie` (Windows:
 `%LOCALAPPDATA%\Roadie`).
 

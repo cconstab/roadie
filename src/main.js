@@ -12,9 +12,12 @@ import { createGitOps } from './gitops.js';
 import { stopRunningCommands } from './exec.js';
 import { browserOpener } from './proc.js';
 import { killAllChildren } from './runner.js';
+import { applyUpdate, checkForUpdate } from './update.js';
 
 const home = roadieHome();
-const app = await createApp({ home, gitops: createGitOps(), config: createConfig(home) });
+// Roadie looks for a newer release of itself, and installs one only when asked to in the window.
+const updater = { check: () => checkForUpdate(), apply: (tag) => applyUpdate({ tag }), stop: () => shutdown(0) };
+const app = await createApp({ home, gitops: createGitOps(), config: createConfig(home), updater });
 const port = await app.listen(Number(process.env.ROADIE_PORT) || 4747);
 // The key in the link is what lets this browser, and nothing else, open Roadie.
 const url = `http://127.0.0.1:${port}/?key=${app.launchKey}`;

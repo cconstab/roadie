@@ -78,6 +78,15 @@ button.primary, .open button { background: var(--accent); border-color: var(--ac
   background: color-mix(in srgb, var(--bad) 12%, var(--panel));
 }
 .problems p { margin: .15rem 0; }
+
+.update {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .6rem;
+  padding: .45rem .75rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.update p { margin: 0; white-space: pre-wrap; }
+.update button { font-size: .9em; padding: .15rem .6rem; }
 .problems button { margin-top: .3rem; font-size: .9em; padding: .15rem .5rem; }
 .problems .fix { color: var(--muted); }
 

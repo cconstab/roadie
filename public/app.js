@@ -58,11 +58,49 @@ function renderProblems() {
   }));
 }
 
+// A newer Roadie has been released: say so, and install it only when asked.
+let updateDone = '';       // what the update said when it finished
+let updateDismissed = '';  // a version the person chose not to hear about again this session
+function renderUpdate() {
+  const box = $('update');
+  const text = document.createElement('p');
+  if (updateDone) {
+    text.textContent = updateDone;
+    box.hidden = false;
+    return box.replaceChildren(text);
+  }
+  const u = state.update;
+  if (!u || u.latest === updateDismissed) { box.hidden = true; return box.replaceChildren(); }
+  box.hidden = false;
+  text.textContent = `Roadie ${u.latest} is available. You have ${u.current}.`;
+  const notes = document.createElement('a');
+  notes.href = u.url; notes.target = '_blank'; notes.rel = 'noopener'; notes.textContent = 'What is new';
+  const later = document.createElement('button');
+  later.type = 'button'; later.textContent = 'Not now';
+  later.addEventListener('click', () => { updateDismissed = u.latest; renderUpdate(); });
+  if (!u.installed) {
+    const how = document.createElement('p');
+    how.textContent = u.how;
+    return box.replaceChildren(text, notes, how, later);
+  }
+  const go = document.createElement('button');
+  go.type = 'button'; go.textContent = `Update to ${u.latest}`;
+  go.addEventListener('click', async () => {
+    if (!window.confirm(`${u.how}\n\nUpdate now?`)) return;
+    go.disabled = true; later.disabled = true; go.textContent = 'Updating…';
+    try { updateDone = (await api('POST', '/api/update')).message; }
+    catch (err) { updateDone = ''; showProblem(err.message); }
+    renderUpdate();
+  });
+  box.replaceChildren(text, notes, go, later);
+}
+
 const STATUS_TEXT = { stopped: 'stopped', starting: 'starting…', running: 'running', failed: 'failed' };
 
 function render() {
   const { site, preview, busy } = state;
   renderProblems();
+  renderUpdate();
 
   $('known-sites').replaceChildren(...(state.knownSites || []).map((key) => new Option(key, key)));
   $('open-btn').disabled = !!busy;

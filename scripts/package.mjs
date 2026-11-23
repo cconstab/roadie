@@ -30,7 +30,8 @@ export const TARGETS = [
 ];
 
 // What goes into every archive, from the repo.
-const APP_FILES = ['src', 'public', 'templates', 'package.json', 'package-lock.json', 'README.md'];
+// (scripts: an installed Roadie updates itself with the installer it came with.)
+const APP_FILES = ['src', 'public', 'templates', 'scripts', 'package.json', 'package-lock.json', 'README.md'];
 
 // Finds its own folder even when started through a link (as the installer sets up).
 export const LAUNCHER_SH = `#!/bin/sh
