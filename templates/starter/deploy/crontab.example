@@ -3,4 +3,4 @@
 #   flock   skips a run if the previous one is still going
 #   logger  sends the output to the system log: journalctl -t {{SLUG}}-update
 # Every 10 minutes means a merge or release goes live at most that long after CI finishes.
-*/10 * * * * flock -n /tmp/{{SLUG}}-update.lock "$HOME/{{REPO}}/deploy/update.sh" 2>&1 | logger -t {{SLUG}}-update
+*/10 * * * * flock -n /tmp/{{SLUG}}-update.lock sh "$HOME/{{REPO}}/deploy/update.sh" 2>&1 | logger -t {{SLUG}}-update

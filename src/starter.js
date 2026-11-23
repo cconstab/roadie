@@ -46,6 +46,7 @@ export function fill(text, values) {
 }
 
 // Writes the starter into dir. Files that already exist are never overwritten.
+// Always with LF line endings, even if Roadie's own copy was checked out with CRLF.
 export function writeStarter(dir, options) {
   const values = starterValues(options);
   const written = [];
@@ -55,7 +56,7 @@ export function writeStarter(dir, options) {
     if (fs.existsSync(target)) { skipped.push(rel); continue; }
     const source = path.join(TEMPLATE_DIR, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, fill(fs.readFileSync(source, 'utf8'), values), { mode: fs.statSync(source).mode & 0o777 });
+    fs.writeFileSync(target, fill(fs.readFileSync(source, 'utf8').replace(/\r\n/g, '\n'), values), { mode: fs.statSync(source).mode & 0o777 });
     written.push(rel);
   }
   return { written, skipped, values };

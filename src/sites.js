@@ -20,8 +20,15 @@ export function parseRepo(input) {
   return { owner, repo, key: `${owner}/${repo}` };
 }
 
-export function siteDir(home, owner, repo) {
-  return path.join(home, 'sites', owner, repo);
+// Windows cannot have a folder called "con", "nul", "com1"... or one ending in a dot.
+// Such an owner or repo gets an underscore added to its folder name there.
+const RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
+export function folderName(name, platform = process.platform) {
+  return platform === 'win32' && (RESERVED.test(name) || name.endsWith('.')) ? `${name}_` : name;
+}
+
+export function siteDir(home, owner, repo, platform = process.platform) {
+  return path.join(home, 'sites', folderName(owner, platform), folderName(repo, platform));
 }
 
 export function sameRepo(originUrl, owner, repo) {

@@ -128,7 +128,7 @@ export async function searchFiles({ gitops, dir, query, glob, limit = 200 }) {
       text = fs.readFileSync(checked.abs, 'utf8');
     } catch { continue; }
     if (text.includes('\0')) continue; // binary
-    const lines = text.split('\n');
+    const lines = text.split(/\r?\n/);
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].toLowerCase().includes(needle)) {
         hits.push(`${file}:${i + 1}: ${lines[i].trim().slice(0, 240)}`);
@@ -302,7 +302,7 @@ function toolLabel(siteDir, name, input = {}) {
   const rel = (p) => {
     if (typeof p !== 'string') return '';
     const r = path.relative(fs.realpathSync(siteDir), path.resolve(siteDir, p));
-    return r && !r.startsWith('..') ? r : p;
+    return r && !r.startsWith('..') ? r.split(path.sep).join('/') : p;
   };
   switch (name) {
     case 'Read': return `Read ${rel(input.file_path)}`;

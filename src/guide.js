@@ -163,7 +163,7 @@ export function hostingGuide(site) {
         id: 'first-deploy',
         title: 'Deploy for the first time',
         text: 'Run the update script by hand once, to watch it work. It downloads the images and starts the containers. Production is skipped with a "could not read the digest" message until you have published your first release; that is expected.',
-        commands: [{ where: SERVER, code: `cd ~/${repo}\ndeploy/update.sh` }],
+        commands: [{ where: SERVER, code: `cd ~/${repo}\nsh deploy/update.sh` }],
         check: 'It prints "staging: deployed ... healthy".',
       },
       {

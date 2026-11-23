@@ -109,6 +109,13 @@ Roadie no longer refuses to start on Windows. What changed:
 - Install hints name Git for Windows and winget; the README has the PowerShell form of setting the key.
 - Roadie's own tests no longer use `sh` syntax, apart from the macOS sandbox tests, which are skipped elsewhere.
 
+Line endings and paths:
+
+- Git for Windows checks text files out with CRLF by default. A test now puts a clone into exactly that state (with real git, `core.autocrlf=true`) and checks the list of changes, the diffs, the fingerprint used for confirmations, the secret scan, search results, and that what is pushed has LF only.
+- Roadie's repo and the starter site each carry a `.gitattributes` (`* text=auto eol=lf`), so shell scripts and Dockerfiles keep LF on every system. The starter is always written with LF.
+- Windows cannot record a file's executable flag, so the starter's deploy script is now run as `sh deploy/update.sh` everywhere (crontab line, README, hosting guide).
+- Paths: git is told to allow paths over 260 characters; a site folder is never given a name Windows reserves (`con`, `nul`, a trailing dot); the static preview hides dotfiles under their Windows spellings; file names shown in the chat use forward slashes.
+
 **None of this has run on a Windows machine.** It was written and tested on macOS, with the Windows branches exercised by telling the code which platform to act as. `docs/ci-test.yml` now includes `windows-latest`; turning CI on (see Open items) is the way to find out what a real Windows run breaks. Like Linux, Windows has no sandbox, and Roadie says so at the top of the window.
 
 Things most likely to need attention on a real Windows run: the Claude Agent SDK's own Windows requirements; `gh auth git-credential` as a git credential helper under Git for Windows; site start commands written for `sh` (for example `PORT=3000 node server.js` in a package.json script) which `cmd.exe` cannot run; tests that create symlinks, which need Developer Mode or an administrator.

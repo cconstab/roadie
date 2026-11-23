@@ -94,3 +94,80 @@ test('without a sandbox (as on Windows and Linux) commands run through the plain
   await runner.stop();
   await assert.rejects(fetch(`http://127.0.0.1:${status.port}/`));
 });
+
+// --- CRLF and Windows paths ----------------------------------------------------
+
+test('a clone checked out with CRLF line endings (Windows git) behaves like any other', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { createRemote } = await import('./fake-github.js');
+  const { createGitOps } = await import('../src/gitops.js');
+  const { scanForSecrets } = await import('../src/guards.js');
+  const { searchFiles } = await import('../src/agent.js');
+
+  const root = tmpDir(t);
+  const remote = createRemote(root, { 'index.html': '<h1>one</h1>\n<p>two</p>\n<p>three</p>\n', 'css/site.css': 'a { color: red }\n' });
+  const dir = remote.clone(path.join(root, 'site'));
+  // What Git for Windows does by default: text files are CRLF on disk, LF in the repo.
+  const git = (...args) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' }).toString();
+  git('config', 'core.autocrlf', 'true');
+  fs.rmSync(path.join(dir, 'index.html'));
+  fs.rmSync(path.join(dir, 'css/site.css'));
+  git('checkout', '--', '.');
+  assert.match(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), /<h1>one<\/h1>\r\n/, 'the clone really has CRLF on disk');
+
+  const gitops = createGitOps();
+  assert.equal(await gitops.isClean(dir), true, 'CRLF on disk alone is not a change');
+  assert.deepEqual(await gitops.changes(dir), []);
+  const before = await gitops.treeId(dir);
+
+  // An editor that keeps CRLF, one that writes LF, and a new CRLF file holding a secret-looking line.
+  fs.writeFileSync(path.join(dir, 'index.html'), '<h1>one</h1>\r\n<p>2</p>\r\n<p>three</p>\r\n');
+  fs.writeFileSync(path.join(dir, 'css/site.css'), 'a { color: blue }\n');
+  const key = ['sk', 'ant', 'api03', 'x'.repeat(30)].join('-');
+  fs.writeFileSync(path.join(dir, 'notes.txt'), `first\r\nkey = ${key}\r\n`);
+
+  const changes = await gitops.changes(dir);
+  assert.deepEqual(changes.map((c) => `${c.status} ${c.path}`), ['modified css/site.css', 'modified index.html', 'added notes.txt']);
+  const html = changes.find((c) => c.path === 'index.html').diff;
+  assert.equal(html.split('\n').filter((l) => /^[+-][^+-]/.test(l)).length, 2, 'one line changed, not the whole file');
+  assert.notEqual(await gitops.treeId(dir), before);
+  assert.equal(await gitops.treeId(dir), await gitops.treeId(dir), 'the same files give the same fingerprint');
+
+  const findings = scanForSecrets({ files: changes.map((c) => c.path), additions: await gitops.additions(dir) });
+  assert.deepEqual(findings.map((f) => f.path), ['notes.txt'], 'a secret on a CRLF line is still caught');
+  assert.match(await searchFiles({ gitops, dir, query: 'three' }), /^index\.html:3: <p>three<\/p>$/, 'no stray carriage return in search results');
+
+  // Commit and push on a branch: what reaches the remote has LF only.
+  fs.writeFileSync(path.join(dir, 'notes.txt'), 'first\r\nsecond\r\n');
+  await gitops.startBranch(dir, 'change/crlf', 'main');
+  await gitops.stageAll(dir);
+  await gitops.commit(dir, 'CRLF change', { defaultBranch: 'main' });
+  await gitops.push(dir, 'change/crlf', { defaultBranch: 'main' });
+  assert.equal(remote.show('change/crlf', 'notes.txt'), 'first\nsecond');
+  assert.doesNotMatch(remote.show('change/crlf', 'index.html'), /\r/);
+  assert.equal(await gitops.isClean(dir), true);
+});
+
+test('the starter is written with LF endings and says so to git', async (t) => {
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { writeStarter, fill } = await import('../src/starter.js');
+  const dir = tmpDir(t);
+  writeStarter(dir, { owner: 'acme', repo: 'site', title: 'Acme', domain: 'acme.example' });
+  assert.match(fs.readFileSync(path.join(dir, '.gitattributes'), 'utf8'), /^\* text=auto eol=lf$/m);
+  for (const file of ['deploy/update.sh', 'Dockerfile', 'server.js', 'compose.yaml']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(dir, file), 'utf8'), /\r/, file);
+  }
+  assert.match(fs.readFileSync(path.join(dir, 'deploy/crontab.example'), 'utf8'), / sh "\$HOME\/site\/deploy\/update\.sh"/, 'run through sh: Windows cannot record the executable flag');
+  assert.equal(fill('a\r\n{{TITLE}}', { TITLE: 'x' }), 'a\r\nx');
+});
+
+test('Windows-only folder names are avoided for the site folder', async () => {
+  const { folderName, siteDir } = await import('../src/sites.js');
+  for (const name of ['con', 'NUL', 'aux', 'com1', 'LPT9', 'nul.dev', 'site.']) assert.equal(folderName(name, 'win32'), `${name}_`, name);
+  for (const name of ['console', 'null', 'my-site', 'com10', '3Chords.dev']) assert.equal(folderName(name, 'win32'), name, name);
+  assert.equal(folderName('con', 'darwin'), 'con');
+  assert.match(siteDir('/home', 'aux', 'nul.dev', 'win32'), /aux_.nul\.dev_$/);
+});

@@ -30,7 +30,8 @@ export function createGitOps({ run = realRun } = {}) {
   // Hooks in a site's clone are never run: Roadie's git commands must do exactly
   // what the interface says and nothing more.
   // Nor a file-system-monitor program named in a clone's config.
-  const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+  // And on Windows, paths longer than 260 characters (deep node_modules) are allowed.
+  const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.longpaths=true'];
   const git = (cwd, args, opts = {}) => run('git', [...SAFE, ...args], { cwd, env: env(), ...opts });
   const gh = (cwd, args, opts = {}) => run('gh', args, { cwd, env: env(), ...opts });
 

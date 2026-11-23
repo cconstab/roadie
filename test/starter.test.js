@@ -57,7 +57,8 @@ test('the starter is a working site: its tests pass and Roadie can read its sett
     assert.ok(result.written.includes(file), file);
   }
   assert.ok(!fs.existsSync(path.join(dir, '.env')), 'no real settings file is created');
-  assert.ok(fs.statSync(path.join(dir, 'deploy/update.sh')).mode & 0o100, 'the deploy script is executable');
+  // Windows has no executable flag, so the script is always run as "sh deploy/update.sh".
+  if (process.platform !== 'win32') assert.ok(fs.statSync(path.join(dir, 'deploy/update.sh')).mode & 0o100, 'the deploy script is executable');
 
   // Nothing of Roadie's is left behind, and the other tools' braces are intact.
   for (const file of result.written) {

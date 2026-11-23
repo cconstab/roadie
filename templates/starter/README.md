@@ -68,7 +68,7 @@ Then, on the server, as your own user (who must be able to run `docker`):
 git clone https://github.com/{{OWNER}}/{{REPO}}.git && cd {{REPO}}
 cp .env.example .env
 cp .env.staging.example .env.staging
-deploy/update.sh                 # first run by hand, to see it work
+sh deploy/update.sh              # first run by hand, to see it work
 crontab -e                       # then add the line from deploy/crontab.example
 ```
 
