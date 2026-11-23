@@ -116,7 +116,7 @@ Line endings and paths:
 - Windows cannot record a file's executable flag, so the starter's deploy script is now run as `sh deploy/update.sh` everywhere (crontab line, README, hosting guide).
 - Paths: git is told to allow paths over 260 characters; a site folder is never given a name Windows reserves (`con`, `nul`, a trailing dot); the static preview hides dotfiles under their Windows spellings; file names shown in the chat use forward slashes.
 
-**None of this has run on a Windows machine.** It was written and tested on macOS, with the Windows branches exercised by telling the code which platform to act as. `docs/ci-test.yml` now includes `windows-latest`; turning CI on (see Open items) is the way to find out what a real Windows run breaks. Like Linux, Windows has no sandbox, and Roadie says so at the top of the window.
+**The tests now run on real Windows (GitHub Actions, 2026-11-23): 141 pass, 7 skipped** (the skipped ones need the macOS sandbox or sh). The first run found real problems, since fixed: a short name for a file that exists was resolved by Windows before the short-name check saw it (still refused, as a secret, but now refused as given); and several tests assumed LF checkouts, permission bits, forward slashes or the spelling `PATH`. **Still not run on Windows:** Roadie itself in a browser, the downloads, and `install.ps1`. Like Linux, Windows has no sandbox, and Roadie says so at the top of the window.
 
 Things most likely to need attention on a real Windows run: the Claude Agent SDK's own Windows requirements; `gh auth git-credential` as a git credential helper under Git for Windows; site start commands written for `sh` (for example `PORT=3000 node server.js` in a package.json script) which `cmd.exe` cannot run; tests that create symlinks, which need Developer Mode or an administrator.
 
@@ -125,7 +125,7 @@ Things most likely to need attention on a real Windows run: the Claude Agent SDK
 - `npm run package` (`scripts/package.mjs`) builds one self-contained archive per system into `dist/`: macOS, Linux and Windows, each for arm64 and x64. Each holds Node with npm (downloaded from nodejs.org and checked against its published checksums), Roadie's files unchanged, and the dependencies for that system. Nothing is compiled or bundled, and no new dependency was added. One machine builds all six.
 - `scripts/install.sh` and `scripts/install.ps1` download the right archive from the newest GitHub release, check it against the release's `SHA256SUMS`, and install it for the current user only (no administrator rights).
 - An installed Roadie lends its Node and npm to sites, placed after any the person has installed themselves.
-- `docs/release.yml` is a workflow that builds and attaches the downloads whenever a release is published. Like the CI workflow it is parked in `docs/` until the owner's gh sign-in has the `workflow` permission.
+- `.github/workflows/release.yml` builds and attaches the downloads whenever a release is published. **It has not run yet**: v0.0.1 was published before it was in place, so the next release is its first run.
 
 Verified on macOS arm64: built all six archives; installed the macOS one through `install.sh` from a local server; ran it with no other Node on the PATH; ran a starter site's `npm test` in the sandbox using only the bundled npm; a download with a wrong checksum was refused. **Not verified:** the Linux and Windows archives were built and inspected but never run; `install.ps1` has never run; no release has been published, so the install commands in the README do not work yet.
 
@@ -145,7 +145,7 @@ Why archives and not `.pkg`/`.msi` installers or a single executable: those need
 
 ## Open items
 
-- **Turn on CI for Roadie itself.** `docs/ci-test.yml` is a ready workflow (npm test on Ubuntu, macOS and Windows). It could not be pushed into place because the owner's gh sign-in lacks the `workflow` permission. To enable: `gh auth refresh -h github.com -s workflow`, then `mkdir -p .github/workflows && git mv docs/ci-test.yml .github/workflows/test.yml`, commit and push. Roadie's tests have therefore **not been run on Linux**.
+- ~~Turn on CI for Roadie itself.~~ Done 2026-11-23: `.github/workflows/test.yml` runs `npm test` on Ubuntu (142 pass, 6 skipped), macOS (148 pass) and Windows (141 pass, 7 skipped) for every push to main and every pull request.
 
 - Try the chat with a real ANTHROPIC_API_KEY.
 - Test sandbox for Linux (bubblewrap or similar). Today Linux runs tests unsandboxed.
