@@ -4,6 +4,7 @@
 // Test files are code the AI may have edited, so they run in the box described
 // in sandbox.js: no network beyond this machine, no way to Roadie's own ports,
 // no sign-in or secrets, and no writing outside the site and temp folders.
+import { stopTree } from './proc.js';
 import { childEnv, trackChild } from './runner.js';
 import { roadieFiles, roadiePorts, sandboxAvailable, sandboxHint, spawnBoxed } from './sandbox.js';
 
@@ -37,7 +38,7 @@ export function runTests({ dir, command, timeoutMs = 300_000, onOutput, tracked 
 
     const timer = setTimeout(() => {
       timedOut = true;
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ }
+      stopTree(child, 'SIGKILL');
     }, timeoutMs);
 
     const finish = (code) => {

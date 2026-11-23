@@ -16,7 +16,9 @@ const SITE_FILES = {
   'index.html': '<h1>hello</h1>\n',
   'README.md': '# Site\n',
   // The "test suite": passes unless a file called BROKEN exists.
-  'check.sh': '#!/bin/sh\nif [ -f BROKEN ]; then echo "1 test failed: BROKEN exists"; exit 1; fi\necho "all tests passed"\n',
+  // The site's "tests": a node script, so it runs the same under sh and cmd.exe.
+  'check.js': 'if (require("node:fs").existsSync("BROKEN")) { console.log("1 test failed: BROKEN exists"); process.exit(1); }\nconsole.log("all tests passed");\n',
+  'slow-check.js': 'setTimeout(() => require("./check.js"), 400);\n',
 };
 
 function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15 } = {}) {
@@ -28,7 +30,7 @@ function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15 } = {
   const config = createConfig(path.join(root, 'home'));
   const site = {
     key: 'acme/site', owner: 'acme', repo: 'site', dir, branch: 'main', defaultBranch: 'main',
-    settings: cleanSettings({ test: 'sh check.sh', stagingUrl: 'https://staging.acme.example', productionUrl: 'https://acme.example', healthPath: '/api/health', ...settings }),
+    settings: cleanSettings({ test: 'node check.js', stagingUrl: 'https://staging.acme.example', productionUrl: 'https://acme.example', healthPath: '/api/health', ...settings }),
   };
   const web = { staging: '{"ok":true,"version":"dev"}', production: '{"ok":true,"version":"v0.0.9"}', hits: [], ...health };
   const events = [];
@@ -395,7 +397,7 @@ test('an empty repo gets one first commit to main, with confirmation, and never 
   await assert.rejects(flow.start({ description: 'x' }), /no commits yet/);
 
   edit('index.html', '<h1>new site</h1>\n');
-  edit('check.sh', SITE_FILES['check.sh']);
+  edit('check.js', SITE_FILES['check.js']);
   edit('.env', `SECRET_KEY=${'abc123def456' + 'ghi789jkl'}\n`);
   await assert.rejects(flow.prepare('first-commit'), /looks like a secret/);
   fs.rmSync(path.join(dir, '.env'));
@@ -482,7 +484,7 @@ test('a test run the AI asked for counts, but only for the files as they were th
   // What the AI's run_tests tool does: the same runner, then tell the change bar.
   const aiRun = async () => {
     const started = await flow.beginTests();
-    await flow.recordTests(started, await runTests({ dir, command: 'sh check.sh' }));
+    await flow.recordTests(started, await runTests({ dir, command: 'node check.js' }));
   };
   await aiRun();
   let v = await flow.view();
@@ -560,7 +562,7 @@ test('if the first push fails, it can be tried again without getting stuck', asy
 });
 
 test('edits that land while the tests are running are not counted as tested', async (t) => {
-  const { flow, edit } = setup(t, { settings: { test: 'sleep 0.4; sh check.sh' } });
+  const { flow, edit } = setup(t, { settings: { test: 'node slow-check.js' } });
   await flow.start({ description: 'Mid-run' });
   edit('index.html', '<h1>before the run</h1>\n');
   const running = flow.tests();

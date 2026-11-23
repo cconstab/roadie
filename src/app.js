@@ -429,7 +429,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       if (!sandboxAvailable()) {
         checks.push({
           id: 'sandbox', ok: false,
-          detail: 'This system has no sandbox for site code yet (Roadie has one on macOS only).',
+          detail: `${process.platform === 'win32' ? 'Windows has' : 'This system has'} no sandbox for site code yet (Roadie has one on macOS only).`,
           fix: "Here a site's tests, its preview server and its install scripts run with your account's full access, including your GitHub sign-in. Read the AI's changes in the right-hand pane before running tests or the preview.",
         });
       }

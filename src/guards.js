@@ -22,7 +22,14 @@ function foldName(name) {
   return String(name).normalize('NFKC')
     .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, '')
     .toLowerCase()
+    .replace(/:.*$/, '')      // Windows: ".git::$INDEX_ALLOCATION" and ".env:stream" open .git and .env
     .replace(/[. ]+$/, '');
+}
+
+// Windows also gives files a second, short name ("GIT~1" for ".git", "ENV~1" for
+// ".env"). A short name hides what it points at, so on Windows none is accepted.
+export function isShortName(name) {
+  return /~\d/.test(String(name));
 }
 
 export function isGitFolderName(name) {
@@ -33,9 +40,11 @@ export function isGitFolderName(name) {
 // Resolve a path the AI gave and say whether it may touch it.
 // Allowed: files inside the site folder, except .git and secret files.
 // Symlinks are followed first, so a link cannot lead outside.
-export function checkSitePath(root, given) {
+export function checkSitePath(root, given, { platform = process.platform } = {}) {
   if (typeof given !== 'string' || !given) return { ok: false, reason: 'No file path was given.' };
-  const realRoot = fs.realpathSync(root);
+  // On Windows the system's own resolver is used: it also settles letter case and short names.
+  const realpath = platform === 'win32' ? fs.realpathSync.native : fs.realpathSync;
+  const realRoot = realpath(root);
   const abs = path.resolve(realRoot, given);
 
   // Walk up to the deepest part of the path that exists, resolve that, then
@@ -50,7 +59,7 @@ export function checkSitePath(root, given) {
     probe = up;
   }
   let real;
-  try { real = path.join(fs.realpathSync(probe), ...tail); }
+  try { real = path.join(realpath(probe), ...tail); }
   catch { return { ok: false, reason: `${given} is a broken link, so Roadie cannot tell where it leads.` }; }
 
   if (real !== realRoot && !real.startsWith(realRoot + path.sep)) {
@@ -59,6 +68,9 @@ export function checkSitePath(root, given) {
   const rel = path.relative(realRoot, real).split(path.sep).join('/');
   if (rel.split('/').some(isGitFolderName)) {
     return { ok: false, reason: 'The .git folder is off limits. Roadie handles git itself.' };
+  }
+  if (platform === 'win32' && rel.split('/').some(isShortName)) {
+    return { ok: false, reason: `${given} uses a Windows short name (with "~"), which hides the real file. Use the file's full name.` };
   }
   if (isSecretPath(rel)) {
     return { ok: false, reason: `${rel} looks like a secrets file, so it is off limits.` };

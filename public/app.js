@@ -660,7 +660,7 @@ function showTests(result) {
   const sandboxed = result ? result.sandboxed : change.tests && change.tests.sandboxed;
   $('tests-note').textContent = result === null ? '' : sandboxed
     ? 'Run in a sandbox: no network beyond this machine, and no writing to the site\'s .git folder.'
-    : 'Run without a sandbox (only available on macOS for now).';
+    : 'Run without a sandbox (Roadie has one on macOS only, for now).';
   if (!$('tests-dialog').open) $('tests-dialog').showModal();
 }
 

@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { stopTree } from './proc.js';
 import { roadieFiles, roadiePorts, sandboxHint, spawnBoxed } from './sandbox.js';
 import { createStaticServer } from './static.js';
 
@@ -12,7 +13,7 @@ const live = new Set();
 
 export function killAllChildren(signal = 'SIGTERM') {
   for (const child of live) {
-    try { process.kill(-child.pid, signal); } catch { /* already gone */ }
+    stopTree(child, signal);
   }
 }
 
@@ -50,7 +51,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function childEnv(extra) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (/^(ANTHROPIC_|CLAUDE_|AWS_BEARER_TOKEN_BEDROCK|GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/.test(key)) delete env[key];
+    if (/^(ANTHROPIC_|CLAUDE_|AWS_BEARER_TOKEN_BEDROCK|GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/i.test(key)) delete env[key];
   }
   // Git-hook installers (husky) cannot write to .git in the sandbox, and Roadie
   // never runs hooks anyway, so tell them to stand down.
@@ -108,7 +109,7 @@ export class Runner extends EventEmitter {
     for (const stream of ['stdout', 'stderr']) {
       let rest = '';
       child[stream].on('data', (chunk) => {
-        const lines = (rest + chunk).split('\n');
+        const lines = (rest + chunk).split(/\r?\n/);
         rest = lines.pop();
         for (const line of lines) this.log(line, stream);
       });
@@ -211,8 +212,8 @@ export class Runner extends EventEmitter {
     this.child = null;
     if (child && child.exitCode === null && child.signalCode === null) {
       const gone = new Promise((resolve) => child.once('close', resolve));
-      try { process.kill(-child.pid, 'SIGTERM'); } catch { /* already gone */ }
-      const timer = setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, 3000);
+      stopTree(child, 'SIGTERM');
+      const timer = setTimeout(() => stopTree(child, 'SIGKILL'), 3000);
       await gone;
       clearTimeout(timer);
     }

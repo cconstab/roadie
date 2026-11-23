@@ -66,11 +66,12 @@ test('a restart reuses the same port', async (t) => {
 
 test('a site that ignores PORT is found on its usual port', async (t) => {
   const dir = tmpDir(t);
-  writeFiles(dir, { 'server.js': SERVER });
+  // Works the same under sh and cmd.exe: the port is an argument, not a shell variable.
+  writeFiles(dir, { 'server.js': SERVER, 'fixed.js': 'process.env.FIXED_PORT = process.argv[2]; require("./server.js");' });
   const fixed = await freePort();
   const runner = new Runner();
   t.after(() => runner.stop());
-  const status = await runner.start({ dir, command: `FIXED_PORT=${fixed} node server.js`, portHint: fixed });
+  const status = await runner.start({ dir, command: `node fixed.js ${fixed}`, portHint: fixed });
   assert.equal(status.state, 'running');
   assert.equal(status.port, fixed);
 });
@@ -97,7 +98,7 @@ test('the install command runs first when node_modules is missing', async (t) =>
   writeFiles(dir, { 'server.js': SERVER });
   const runner = new Runner();
   t.after(() => runner.stop());
-  const status = await runner.start({ dir, command: 'node server.js', install: 'mkdir node_modules && echo installed > node_modules/marker' });
+  const status = await runner.start({ dir, command: 'node server.js', install: 'mkdir node_modules && echo installed > node_modules/marker' }); // valid in sh and cmd.exe
   assert.equal(status.state, 'running');
   assert.ok(fs.existsSync(path.join(dir, 'node_modules', 'marker')));
 
@@ -172,7 +173,7 @@ test('git-hook installers are told to stand down, and failures in the sandbox ar
   writeFiles(dir, { 'server.js': SERVER });
   const runner = new Runner();
   t.after(() => runner.stop());
-  const status = await runner.start({ dir, command: 'node server.js', install: 'test "$HUSKY" = 0 && mkdir node_modules' });
+  const status = await runner.start({ dir, command: 'node server.js', install: `node -e "process.exit(process.env.HUSKY === '0' ? 0 : 1)" && mkdir node_modules` });
   assert.equal(status.state, 'running', 'the install saw HUSKY=0');
 
   assert.match(sandboxHint('sh: /Users/x/file: Operation not permitted', 'tests'), /Roadie's sandbox.*cannot reach the internet/s);

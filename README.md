@@ -10,10 +10,10 @@ machine without a click.
 
 ## Setup
 
-Roadie runs on macOS and Linux (on Windows, use WSL). You need:
+Roadie runs on macOS, Linux and Windows. You need:
 
 - **Node 24** or newer
-- **git**, with your name and email set
+- **git**, with your name and email set (on Windows: [Git for Windows](https://git-scm.com/download/win))
 - the **GitHub command-line tool `gh`**, signed in (`gh auth login`)
 - an **AI** to do the editing: an Anthropic API key, or [Ollama](https://ollama.com)
   with a local model
@@ -24,6 +24,10 @@ npm install                          # the Claude Agent SDK and zod, nothing els
 export ANTHROPIC_API_KEY=sk-ant-...  # skip this if you will use Ollama
 npm start                            # opens your browser
 ```
+
+On Windows, in PowerShell, set the key with `$env:ANTHROPIC_API_KEY = "sk-ant-..."`
+instead of `export`. The other commands are the same. git and gh can be installed
+with `winget install Git.Git GitHub.cli`.
 
 `npm start` prints a link and opens it. Use that link: it carries a key, and
 Roadie will not show itself to a browser (or anything else on your machine) that
@@ -36,7 +40,8 @@ it started when you stop it (Ctrl+C).
 
 **Use macOS for now if you can.** On macOS, Roadie runs all of a site's own code
 in a sandbox (see [Rules Roadie enforces](#rules-roadie-enforces)). On Linux
-there is no sandbox yet, and Roadie warns you of that at the top of the window.
+and Windows there is no sandbox yet, and Roadie warns you of that at the top of
+the window.
 
 `npm test` runs Roadie's own tests.
 
@@ -186,7 +191,7 @@ all three inside a sandbox, where that code:
 Roadie also never runs git hooks, or any helper program named in a clone's git
 settings.
 
-**On Linux there is no sandbox yet.** There, a site's tests, server and install
+**On Linux and Windows there is no sandbox yet.** There, a site's tests, server and install
 scripts run with your account's full access, including your GitHub sign-in. Roadie
 says so at the top of the window. Read the AI's changes in the right-hand pane
 before running tests or the preview.
@@ -275,6 +280,7 @@ standard library plus the Agent SDK.
 | `src/change.js` | the change bar's logic, as pure functions |
 | `src/flow.js` | carries a change through each step |
 | `src/guards.js` | path limits, the secret scan, confirmations |
+| `src/proc.js` | starting and stopping site commands on each system (process groups, or `taskkill` on Windows) |
 | `src/sandbox.js` | the sandbox that tests, the preview server and installs run in |
 | `src/tests.js` | running a site's tests |
 | `src/starter.js`, `templates/starter/` | the starter site |

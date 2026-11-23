@@ -72,7 +72,7 @@ test('runTests reports pass, fail, a missing command and a timeout', async (t) =
   assert.match(pass.output, /all good/);
   assert.match(seen.join(''), /all good/);
 
-  const fail = await runTests({ dir, command: 'echo broken >&2; exit 3' });
+  const fail = await runTests({ dir, command: `node -e "console.error('broken'); process.exit(3)"` });
   assert.equal(fail.passed, false);
   assert.equal(fail.code, 3);
   assert.match(fail.output, /broken/);
@@ -81,7 +81,7 @@ test('runTests reports pass, fail, a missing command and a timeout', async (t) =
   assert.equal(none.passed, false);
   assert.match(none.output, /no test command/);
 
-  const slow = await runTests({ dir, command: 'sleep 5', timeoutMs: 300 });
+  const slow = await runTests({ dir, command: 'node -e "setInterval(() => {}, 1000)"', timeoutMs: 300 });
   assert.equal(slow.passed, false);
   assert.equal(slow.timedOut, true);
 });
@@ -91,7 +91,7 @@ test('tests do not inherit AI or GitHub credentials', async (t) => {
   process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
   process.env.GH_TOKEN = 'ghp_test_not_real';
   t.after(() => { delete process.env.ANTHROPIC_API_KEY; delete process.env.GH_TOKEN; });
-  const result = await runTests({ dir, command: 'echo "key=[$ANTHROPIC_API_KEY] gh=[$GH_TOKEN]"' });
+  const result = await runTests({ dir, command: `node -e "console.log('key=[' + (process.env.ANTHROPIC_API_KEY || '') + '] gh=[' + (process.env.GH_TOKEN || '') + ']')"` });
   assert.match(result.output, /key=\[\] gh=\[\]/);
 });
 

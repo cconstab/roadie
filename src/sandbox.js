@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { isSecretPath } from './guards.js';
+import { spawnShell, treeOptions } from './proc.js';
 
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
 
@@ -143,10 +144,11 @@ export function sandboxProfile({ siteDir, mode, blockPorts = [], openNetwork = f
 // Starts a shell command inside the sandbox. Without a sandbox it starts it plainly
 // and says so in the returned object, so callers can tell the person.
 export function spawnBoxed(command, { cwd, env, mode, blockPorts, openNetwork, protect, tracked, sandbox = sandboxAvailable(), stdio = ['ignore', 'pipe', 'pipe'] }) {
-  const options = { cwd, env, detached: true, stdio }; // its own process group, so the whole tree can be stopped
+  const options = { cwd, env, stdio };
+  // Either way it is started so the whole tree can be stopped together (see proc.js).
   const child = sandbox
-    ? spawn(SANDBOX_EXEC, ['-p', sandboxProfile({ siteDir: cwd, mode, blockPorts, openNetwork, protect, tracked, env }), '/bin/sh', '-c', command], options)
-    : spawn(command, { ...options, shell: true });
+    ? spawn(SANDBOX_EXEC, ['-p', sandboxProfile({ siteDir: cwd, mode, blockPorts, openNetwork, protect, tracked, env }), '/bin/sh', '-c', command], { ...options, ...treeOptions() })
+    : spawnShell(command, options);
   child.sandboxed = !!sandbox;
   return child;
 }

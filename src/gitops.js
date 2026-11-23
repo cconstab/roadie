@@ -76,7 +76,7 @@ export function createGitOps({ run = realRun } = {}) {
       const g = await run('git', ['--version']);
       checks.push(g.code === 0
         ? { id: 'git', ok: true, detail: g.stdout.trim() }
-        : { id: 'git', ok: false, detail: 'git is not installed.', fix: 'Install git (on a Mac: xcode-select --install), then restart Roadie.' });
+        : { id: 'git', ok: false, detail: 'git is not installed.', fix: process.platform === 'win32' ? 'Install Git for Windows from https://git-scm.com/download/win (or: winget install Git.Git), then open a new terminal and restart Roadie.' : 'Install git (on a Mac: xcode-select --install), then restart Roadie.' });
 
       if (g.code === 0) {
         const name = await run('git', ['config', 'user.name']);
@@ -89,7 +89,7 @@ export function createGitOps({ run = realRun } = {}) {
 
       const h = await run('gh', ['--version']);
       if (h.code !== 0) {
-        checks.push({ id: 'gh', ok: false, detail: 'The GitHub command-line tool (gh) is not installed.', fix: 'Install it from https://cli.github.com, run "gh auth login", then restart Roadie.' });
+        checks.push({ id: 'gh', ok: false, detail: 'The GitHub command-line tool (gh) is not installed.', fix: `Install it from https://cli.github.com${process.platform === 'win32' ? ' (or: winget install GitHub.cli), open a new terminal' : ''}, run "gh auth login", then restart Roadie.` });
         return checks;
       }
       checks.push({ id: 'gh', ok: true, detail: h.stdout.split('\n')[0].trim() });
@@ -120,7 +120,9 @@ export function createGitOps({ run = realRun } = {}) {
     async isRepo(dir) {
       const r = await git(dir, ['rev-parse', '--show-toplevel']);
       if (r.code !== 0) return false;
-      try { return fs.realpathSync(r.stdout.trim()) === fs.realpathSync(dir); } catch { return false; }
+      // Windows: git answers with forward slashes and its own letter case for the same folder.
+      const same = (p) => { const real = fs.realpathSync.native(p); return process.platform === 'win32' ? real.toLowerCase() : real; };
+      try { return same(r.stdout.trim()) === same(dir); } catch { return false; }
     },
 
     originUrl(dir) {

@@ -93,10 +93,25 @@ Known limits the sandbox places on ordinary sites (by design, documented in the 
 
 **What is still not defended against:**
 
-- **Linux has no sandbox.** Everything in the table that depends on the sandbox holds on macOS only. Roadie warns about this in the window and the README says so. A Linux sandbox (bubblewrap) is the most important piece of future work.
+- **Linux and Windows have no sandbox.** Everything in the table that depends on the sandbox holds on macOS only. Roadie warns about this in the window and the README says so. A Linux sandbox (bubblewrap) is the most important piece of future work.
 - **Install commands have the internet.** They cannot use the owner's sign-ins or write outside the site, but a malicious install script could send the site's own files somewhere. They can also read `~/.npmrc`, which may hold a registry token.
 - **Other programs running as the same user**, outside the sandbox, are not something Roadie can defend against: they could use git and gh directly.
 - macOS `sandbox-exec` is deprecated by Apple, though it still works and is widely used.
+
+## Windows support (added 2026-11-23)
+
+Roadie no longer refuses to start on Windows. What changed:
+
+- Site commands (start, test, install) run under `cmd.exe` there, and the whole process tree is ended with `taskkill /T /F`, since Windows has no process groups or signals (`src/proc.js`).
+- The launch link is opened without a shell, so nothing in it can be read as a command.
+- Path guards know Windows spellings: `.git::$INDEX_ALLOCATION`, `.env::$DATA`, trailing dots and spaces, and short names such as `GIT~1` or `ENV~1` (refused outright on Windows).
+- Credential variables are stripped from site code whatever their letter case (Windows ignores case in variable names).
+- Install hints name Git for Windows and winget; the README has the PowerShell form of setting the key.
+- Roadie's own tests no longer use `sh` syntax, apart from the macOS sandbox tests, which are skipped elsewhere.
+
+**None of this has run on a Windows machine.** It was written and tested on macOS, with the Windows branches exercised by telling the code which platform to act as. `docs/ci-test.yml` now includes `windows-latest`; turning CI on (see Open items) is the way to find out what a real Windows run breaks. Like Linux, Windows has no sandbox, and Roadie says so at the top of the window.
+
+Things most likely to need attention on a real Windows run: the Claude Agent SDK's own Windows requirements; `gh auth git-credential` as a git credential helper under Git for Windows; site start commands written for `sh` (for example `PORT=3000 node server.js` in a package.json script) which `cmd.exe` cannot run; tests that create symlinks, which need Developer Mode or an administrator.
 
 ## Decision confirmed by the owner
 
@@ -104,7 +119,7 @@ Known limits the sandbox places on ordinary sites (by design, documented in the 
 
 ## Open items
 
-- **Turn on CI for Roadie itself.** `docs/ci-test.yml` is a ready workflow (npm test on Ubuntu and macOS). It could not be pushed into place because the owner's gh sign-in lacks the `workflow` permission. To enable: `gh auth refresh -h github.com -s workflow`, then `mkdir -p .github/workflows && git mv docs/ci-test.yml .github/workflows/test.yml`, commit and push. Roadie's tests have therefore **not been run on Linux**.
+- **Turn on CI for Roadie itself.** `docs/ci-test.yml` is a ready workflow (npm test on Ubuntu, macOS and Windows). It could not be pushed into place because the owner's gh sign-in lacks the `workflow` permission. To enable: `gh auth refresh -h github.com -s workflow`, then `mkdir -p .github/workflows && git mv docs/ci-test.yml .github/workflows/test.yml`, commit and push. Roadie's tests have therefore **not been run on Linux**.
 
 - Try the chat with a real ANTHROPIC_API_KEY.
 - Test sandbox for Linux (bubblewrap or similar). Today Linux runs tests unsandboxed.

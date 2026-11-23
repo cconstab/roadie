@@ -61,7 +61,7 @@ export function aiStatus(ai, env = process.env) {
   return {
     ready: false,
     label: 'Claude',
-    problem: 'No ANTHROPIC_API_KEY was set when Roadie started. Set it in your shell (export ANTHROPIC_API_KEY=...) and restart Roadie, or choose Ollama in AI settings.',
+    problem: `No ANTHROPIC_API_KEY was set when Roadie started. Set it in your terminal (${process.platform === 'win32' ? '$env:ANTHROPIC_API_KEY = "..." in PowerShell' : 'export ANTHROPIC_API_KEY=...'}) and restart Roadie, or choose Ollama in AI settings.`,
   };
 }
 
@@ -69,7 +69,7 @@ export function aiStatus(ai, env = process.env) {
 export function agentEnv(ai, base = process.env) {
   const env = { ...base };
   for (const key of Object.keys(env)) {
-    if (/^(GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/.test(key)) delete env[key];
+    if (/^(GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/i.test(key)) delete env[key];
   }
   Object.assign(env, {
     CLAUDE_AGENT_SDK_CLIENT_APP: 'roadie/0.1',
