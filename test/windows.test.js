@@ -199,8 +199,12 @@ test('the installers name the same downloads the packager builds, and check them
   for (const script of [sh, ps]) {
     assert.match(script, /SHA256SUMS/);
     assert.match(script, /does not match the release's checksum, so nothing was installed/);
-    assert.doesNotMatch(script, /sudo|RunAs/i, 'never asks for administrator rights');
   }
+  // Roadie itself is installed without administrator rights. The only "sudo" is in the
+  // commands offered for a missing system tool, which are shown and run only on a yes.
+  assert.doesNotMatch(ps, /RunAs/i);
+  const sudoLines = sh.split('\n').filter((l) => /sudo/.test(l));
+  assert.ok(sudoLines.length > 0 && sudoLines.every((l) => /^\s*elif have \w+(-\w+)?; then echo "sudo /.test(l)), 'sudo appears only in offered commands');
 });
 
 test("an installed Roadie lends its Node and npm to sites, after the person's own", async (t) => {
