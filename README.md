@@ -357,3 +357,7 @@ standard library plus the Agent SDK.
 `test/fake-github.js` is a stand-in for GitHub used by the tests: git runs for
 real against a local bare repository, and `gh` is answered by a fake that really
 merges and tags there.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
