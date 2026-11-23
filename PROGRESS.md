@@ -85,9 +85,9 @@ A fresh reviewer read the safety-critical code looking for ways to break the rul
 - **Other programs running as the same user**, outside the sandbox, are not something Roadie can defend against: they could use git and gh directly.
 - macOS `sandbox-exec` is deprecated by Apple, though it still works and is widely used.
 
-## Decision taken, to confirm with the owner
+## Decision confirmed by the owner
 
-- **First commit in an empty repo.** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Roadie offers "Make the first commit" only when GitHub has no commits at all, with the usual confirmation, and refuses it ever after. This is the single exception to "never push to main". It was implemented without the owner's answer; say if it should go.
+- **First commit in an empty repo (confirmed 2026-11-23).** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Roadie offers "Make the first commit" only when GitHub has no commits at all, with the usual confirmation, and refuses it ever after. This is the single exception to "never push to main".
 
 ## Open items
 
