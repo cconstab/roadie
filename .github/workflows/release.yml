@@ -1,6 +1,4 @@
 # Builds the downloads when a release is published, and attaches them to it.
-# Parked here until the owner's gh sign-in may push workflow files; then:
-#   git mv docs/release.yml .github/workflows/release.yml
 name: release downloads
 
 on:
