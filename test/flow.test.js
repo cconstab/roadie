@@ -164,7 +164,7 @@ test('a whole change: branch, tests, pull request, CI, merge, staging, release, 
   assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir }).toString().trim(), remote.sha('main'));
   assert.equal(execFileSync('git', ['branch', '--list', 'change/*'], { cwd: dir }).toString().trim(), '');
   assert.equal(config.getChange('acme/site'), null);
-  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), '<h1>hello, world</h1>\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8').replace(/\r\n/g, '\n'), '<h1>hello, world</h1>\n'); // git on Windows may check out CRLF
 
   // Nothing was ever force-pushed, and main was never pushed from here.
   const pushes = github.state.gitCalls.filter((c) => / push /.test(` ${c} `));
@@ -432,7 +432,7 @@ test('abandoning a change keeps the edits in the stash and goes back to main', a
   assert.match(plan.summary, /set aside in git's stash, not deleted/);
   assert.equal(v.stage, 'idle');
   assert.equal(config.getChange('acme/site'), null);
-  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), '<h1>hello</h1>\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8').replace(/\r\n/g, '\n'), '<h1>hello</h1>\n');
   assert.ok(!fs.existsSync(path.join(dir, 'new.txt')));
   assert.match(execFileSync('git', ['stash', 'list'], { cwd: dir }).toString(), /roadie: change\/never-mind/);
   execFileSync('git', ['stash', 'pop'], { cwd: dir });

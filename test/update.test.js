@@ -59,7 +59,7 @@ test('an update is the installer, told which release and which folder', () => {
   const info = { installed: true, dir: '/opt/roadie', appDir: '/opt/roadie/app', version: 'v0.3.0' };
   const unix = updatePlan({ info, tag: 'v0.4.0', platform: 'darwin' });
   assert.equal(unix.cmd, '/bin/sh');
-  assert.deepEqual(unix.args, ['/opt/roadie/app/scripts/install.sh']);
+  assert.deepEqual(unix.args, [path.join('/opt/roadie/app', 'scripts', 'install.sh')]);
   assert.deepEqual(unix.env, { ROADIE_VERSION: 'v0.4.0', ROADIE_INSTALL_DIR: '/opt/roadie', ROADIE_INSTALL_DEPS: 'no', ROADIE_NO_LINK: '1' });
   assert.equal(unix.afterExit, false);
 

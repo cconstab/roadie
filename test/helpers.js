@@ -2,9 +2,16 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+process.setMaxListeners(0); // one exit listener per temporary folder
+
 export function tmpDir(t, prefix = 'roadie-test-') {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Removed when the test file's process ends, not in t.after(): hooks run in the
+  // order they were added, and Windows will not delete a folder that a site
+  // process (stopped by a later hook) is still running in.
+  process.once('exit', () => {
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch { /* left for the system's temp cleanup */ }
+  });
   return dir;
 }
 

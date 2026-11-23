@@ -211,14 +211,16 @@ test("an installed Roadie lends its Node and npm to sites, after the person's ow
   const path = await import('node:path');
   const { childEnv } = await import('../src/runner.js');
   const saved = { PATH: process.env.PATH, bin: process.env.ROADIE_RUNTIME_BIN };
+  // A copy of the environment keeps Windows' own spelling, "Path".
+  const pathOf = (env) => env[Object.keys(env).find((k) => k.toUpperCase() === 'PATH')];
   t.after(() => { process.env.PATH = saved.PATH; if (saved.bin === undefined) delete process.env.ROADIE_RUNTIME_BIN; else process.env.ROADIE_RUNTIME_BIN = saved.bin; });
 
   delete process.env.ROADIE_RUNTIME_BIN;
-  assert.equal(childEnv({}).PATH, saved.PATH, 'run from source: PATH is left alone');
+  assert.equal(pathOf(childEnv({})), saved.PATH, 'run from source: PATH is left alone');
 
   process.env.ROADIE_RUNTIME_BIN = '/opt/roadie/runtime/bin';
   process.env.PATH = ['/usr/local/bin', '/usr/bin'].join(path.delimiter);
-  assert.equal(childEnv({}).PATH, ['/usr/local/bin', '/usr/bin', '/opt/roadie/runtime/bin'].join(path.delimiter), 'added last');
-  process.env.PATH = childEnv({}).PATH;
-  assert.equal(childEnv({}).PATH, process.env.PATH, 'and only once');
+  assert.equal(pathOf(childEnv({})), ['/usr/local/bin', '/usr/bin', '/opt/roadie/runtime/bin'].join(path.delimiter), 'added last');
+  process.env.PATH = pathOf(childEnv({}));
+  assert.equal(pathOf(childEnv({})), process.env.PATH, 'and only once');
 });

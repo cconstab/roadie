@@ -69,7 +69,11 @@ export function checkSitePath(root, given, { platform = process.platform } = {})
   if (rel.split('/').some(isGitFolderName)) {
     return { ok: false, reason: 'The .git folder is off limits. Roadie handles git itself.' };
   }
-  if (platform === 'win32' && rel.split('/').some(isShortName)) {
+  // Checked on the name as given too: where the file exists, Windows has already
+  // turned its short name into the real one by this point.
+  // (Only the part inside the site folder: the folder's own path may hold one, as in C:\Users\JSMITH~1.)
+  const asGiven = path.relative(path.resolve(root), path.resolve(root, given)).split(/[\\/]/);
+  if (platform === 'win32' && [...rel.split('/'), ...asGiven].some(isShortName)) {
     return { ok: false, reason: `${given} uses a Windows short name (with "~"), which hides the real file. Use the file's full name.` };
   }
   if (isSecretPath(rel)) {

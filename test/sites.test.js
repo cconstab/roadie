@@ -126,5 +126,6 @@ test('site settings are saved in Roadie\'s home, cleaned, and never in the site'
   assert.deepEqual(config.getSite('acme/site'), saved);
   assert.equal(config.getSite('acme/other'), null);
   assert.deepEqual(fs.readdirSync(home), ['config.json']);
-  assert.equal(fs.statSync(config.file).mode & 0o777, 0o600);
+  // Windows has no such permission bits; there the file is protected by the user's profile folder.
+  if (process.platform !== 'win32') assert.equal(fs.statSync(config.file).mode & 0o777, 0o600);
 });
