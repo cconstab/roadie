@@ -1,0 +1,113 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: npm test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [24, 26]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      # no dependencies, so there is nothing to install
+      - run: npm test
+
+  docker:
+    name: docker image builds and boots
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build image
+        run: docker build --load -t site:ci .
+      - name: Start container
+        run: docker run -d --name site -p 8080:8080 site:ci
+      - name: Wait for healthcheck
+        run: |
+          for _ in $(seq 1 30); do
+            health=$(docker inspect -f '{{.State.Health.Status}}' site)
+            echo "health: $health"
+            [ "$health" = healthy ] && break
+            sleep 2
+          done
+          [ "$health" = healthy ] || { docker logs site; exit 1; }
+      - name: Smoke test
+        run: |
+          curl -fsS http://localhost:8080/api/health
+          curl -fsS -o /dev/null http://localhost:8080/
+          # server source must never be served
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/server.js)" = 404
+      - name: Container logs
+        if: always()
+        run: docker logs site || true
+
+  # Merged to main    -> {{IMAGE}}:staging  (the staging site)
+  # Release published -> :latest and :<tag>  (the production site)
+  # The server polls for new images and restarts itself: see deploy/update.sh.
+  publish:
+    name: publish image
+    if: github.event_name == 'release' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    needs: [test, docker]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: {{IMAGE}}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Pick tags
+        id: tags
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            version=$RELEASE_TAG
+            tags=$IMAGE:$RELEASE_TAG
+            # a pre-release gets its own tag but never becomes production
+            [ "$PRERELEASE" = true ] || tags="$tags,$IMAGE:latest"
+          else
+            version=main-${GITHUB_SHA::7}
+            tags=$IMAGE:staging,$IMAGE:sha-${GITHUB_SHA::7}
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: APP_VERSION=${{ steps.tags.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

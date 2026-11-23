@@ -191,6 +191,22 @@ dialog h2 { font-size: 1rem; text-transform: none; letter-spacing: 0; color: var
 .diff .hunk { color: var(--muted); background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .diff-note { margin: 0; padding: .3rem .5rem; color: var(--muted); border-top: 1px solid var(--line); }
 
+/* starter and hosting guide */
+dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3rem); }
+.file-list { margin: .5rem 0; }
+.file-list summary { cursor: pointer; font-weight: 600; }
+.file-list ul { margin: .4rem 0 0; padding-left: 1.2rem; columns: 2; font-family: ui-monospace, monospace; font-size: .88em; color: var(--muted); }
+.guide-head { display: flex; align-items: center; gap: .5rem; }
+.step { border: 1px solid var(--line); border-radius: 8px; margin: .4rem 0; padding: 0 .7rem; }
+.step[open] { padding-bottom: .7rem; }
+.step summary { cursor: pointer; padding: .5rem 0; font-weight: 600; display: flex; align-items: center; gap: .5rem; }
+.step summary input { width: 1rem; height: 1rem; margin: 0; }
+.step p { margin: .3rem 0 .6rem; }
+.step pre { margin: 0 0 .6rem; padding: .5rem .6rem; background: var(--code-bg); color: var(--code-text); border-radius: 0 0 6px 6px; overflow-x: auto; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.cmd-label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .2rem .3rem .2rem .6rem; background: color-mix(in srgb, var(--muted) 18%, var(--panel)); border-radius: 6px 6px 0 0; font-size: .85em; color: var(--muted); }
+.cmd-label button { padding: .05rem .5rem; font-size: .95em; }
+.step .check { color: var(--muted); }
+
 /* AI settings */
 .choice { display: flex !important; align-items: center; gap: .4rem; }
 .choice input { width: auto; }

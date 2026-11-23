@@ -87,6 +87,20 @@ export function createConfig(home = roadieHome()) {
     lastSite() {
       return load().lastSite || null;
     },
+    // Which hosting-guide steps the person has ticked off for a site.
+    getGuideDone(key) {
+      const done = (load().guides || {})[key];
+      return Array.isArray(done) ? done : [];
+    },
+    setGuideDone(key, id, done) {
+      const data = load();
+      data.guides = data.guides || {};
+      const set = new Set(data.guides[key] || []);
+      if (done) set.add(String(id)); else set.delete(String(id));
+      data.guides[key] = [...set];
+      save(data);
+      return data.guides[key];
+    },
     // Which AI to use. Keys and tokens are never stored here.
     getAi() {
       return cleanAi({ ...DEFAULT_AI, ...load().ai });

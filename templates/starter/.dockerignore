@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.*
+.git
+.github
+test
+deploy
+*.log
+README.md
+Dockerfile
+compose.yaml
+.dockerignore

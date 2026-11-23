@@ -59,6 +59,8 @@ function render() {
   $('open-btn').disabled = !!busy;
   $('open-btn').textContent = busy ? 'Opening…' : 'Open site';
   $('settings-btn').hidden = !site;
+  $('guide-btn').hidden = !site;
+  $('starter-btn').hidden = !(site && site.blank);
 
   const info = $('site-info');
   if (site) {
@@ -361,11 +363,137 @@ $('open-form').addEventListener('submit', async (e) => {
     framePath = '/';
     $('log').textContent = '';
     setState(await api('POST', '/api/open', { repo: $('repo').value }));
+    if (state.site.blank) showStarter(); else showSettings();
+  } catch (err) {
+    showProblem(err.message);
+  }
+});
+
+// --- starter site for a blank repo -------------------------------------------
+
+function showStarter() {
+  const { site } = state;
+  if (!site || !site.blank) return;
+  const form = $('starter-form');
+  if (!form.elements.title.value) form.elements.title.value = site.repo;
+  $('starter-intro').textContent = site.blank === 'empty'
+    ? `${site.key} is empty. Roadie can put a starter site in it, ready to run, test and deploy.`
+    : `${site.key} only has its README or licence. Roadie can add a starter site around them, ready to run, test and deploy.`;
+  $('starter-files').replaceChildren(...(state.starterFiles || []).map((name) => {
+    const li = document.createElement('li');
+    li.textContent = name;
+    return li;
+  }));
+  $('starter-dialog').showModal();
+}
+
+$('starter-btn').addEventListener('click', showStarter);
+$('starter-cancel').addEventListener('click', () => $('starter-dialog').close());
+$('starter-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = Object.fromEntries(new FormData(e.target));
+  $('starter-dialog').close();
+  try {
+    setState(await api('POST', '/api/starter', body));
+    refreshChanges(0);
     showSettings();
   } catch (err) {
     showProblem(err.message);
   }
 });
+
+// --- hosting guide -------------------------------------------------------------
+
+async function copyText(button, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    button.textContent = 'Copied';
+  } catch {
+    button.textContent = 'Select and copy by hand';
+  }
+  setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+}
+
+function guideStep(step, done, firstOpen) {
+  const details = document.createElement('details');
+  details.className = 'step';
+  details.open = step.id === firstOpen;
+  const summary = document.createElement('summary');
+  const tick = document.createElement('input');
+  tick.type = 'checkbox';
+  tick.checked = done.has(step.id);
+  tick.title = 'Mark this step as done';
+  tick.addEventListener('click', (e) => e.stopPropagation());
+  tick.addEventListener('change', async () => {
+    try {
+      const result = await api('POST', '/api/guide/done', { id: step.id, done: tick.checked });
+      $('guide-progress').textContent = `${result.done.length} of ${$('guide-steps').children.length} done`;
+    } catch (err) { showProblem(err.message); }
+  });
+  const title = document.createElement('span');
+  title.textContent = `${step.number}. ${step.title}`;
+  summary.append(tick, title);
+
+  const text = document.createElement('p');
+  text.textContent = step.text;
+  details.append(summary, text);
+
+  for (const command of step.commands) {
+    const label = document.createElement('div');
+    label.className = 'cmd-label';
+    const where = document.createElement('span');
+    where.textContent = command.label ? `${command.label} (${command.where})` : command.where;
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.textContent = 'Copy';
+    copy.addEventListener('click', () => copyText(copy, command.code));
+    label.append(where, copy);
+    const pre = document.createElement('pre');
+    pre.textContent = command.code;
+    details.append(label, pre);
+  }
+
+  const check = document.createElement('p');
+  check.className = 'check';
+  check.textContent = `Done when: ${step.check}`;
+  const ask = document.createElement('button');
+  ask.type = 'button';
+  ask.textContent = 'Ask the AI about this step';
+  ask.addEventListener('click', () => askGuide(step.id));
+  details.append(check, ask);
+  return details;
+}
+
+async function showGuide() {
+  try {
+    const { guide, done } = await api('GET', '/api/guide');
+    const doneSet = new Set(done);
+    const first = (guide.steps.find((s) => !doneSet.has(s.id)) || guide.steps[0]).id;
+    $('guide-intro').textContent = 'How to put this site on a server of your own, with HTTPS, a staging copy and automatic deploys. '
+      + 'Roadie never connects to your server: you run each command yourself, and tick steps off as you go. '
+      + 'The commands are for Ubuntu or Debian.'
+      + (guide.hasDomain ? '' : ' No domain is set for this site yet, so the guide uses example.com.');
+    $('guide-steps').replaceChildren(...guide.steps.map((s) => guideStep(s, doneSet, first)));
+    $('guide-progress').textContent = `${done.filter((id) => guide.steps.some((s) => s.id === id)).length} of ${guide.steps.length} done`;
+    $('guide-dialog').showModal();
+  } catch (err) {
+    showProblem(err.message);
+  }
+}
+
+async function askGuide(id) {
+  try {
+    await api('POST', '/api/guide/ask', id ? { id } : {});
+    $('guide-dialog').close();
+  } catch (err) {
+    $('guide-dialog').close();
+    showProblem(err.message);
+  }
+}
+
+$('guide-btn').addEventListener('click', showGuide);
+$('guide-close').addEventListener('click', () => $('guide-dialog').close());
+$('guide-talk').addEventListener('click', () => askGuide(null));
 
 $('settings-btn').addEventListener('click', showSettings);
 $('settings-cancel').addEventListener('click', () => $('settings').close());

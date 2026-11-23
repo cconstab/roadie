@@ -1,0 +1,6 @@
+# Auto-deploy for {{TITLE}}. Runs as you, not root: add it with `crontab -e`.
+# Change the path if the checkout lives somewhere else.
+#   flock   skips a run if the previous one is still going
+#   logger  sends the output to the system log: journalctl -t {{SLUG}}-update
+# Every 10 minutes means a merge or release goes live at most that long after CI finishes.
+*/10 * * * * flock -n /tmp/{{SLUG}}-update.lock "$HOME/{{REPO}}/deploy/update.sh" 2>&1 | logger -t {{SLUG}}-update

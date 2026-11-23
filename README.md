@@ -4,9 +4,10 @@ Edit a hand-coded website by chatting with an AI, watch a live preview, then wal
 the change through GitHub to staging and production. Roadie runs on your own
 machine, against your own site.
 
-**Status: milestone 2 of 5.** Opening a site, the live preview, chatting with the AI
-and the list of changes work. The change bar (branch, tests, pull request, merge,
-release) is still to come. See [PROGRESS.md](PROGRESS.md).
+**Status: milestone 2 of 5.** Opening a site, starting one from an empty repo, the
+live preview, chatting with the AI, the list of changes and the hosting guide
+work. The change bar (branch, tests, pull request, merge, release) is still to
+come. See [PROGRESS.md](PROGRESS.md).
 
 ## Setup
 
@@ -38,6 +39,46 @@ missing. It listens on `127.0.0.1` only.
    Correct anything that is wrong, then choose **Save and run**.
 
 Settings are saved in `~/roadie/config.json`, never in the site's repo.
+
+## Starting from an empty repo
+
+Open a repo that has nothing in it (or only the README, licence and .gitignore
+GitHub offers) and Roadie asks whether to set up a **starter site**. Give it a
+name and, if you have one, a domain. It creates, on your machine only:
+
+- a home page, a 404 page and a stylesheet in `public/`
+- `server.js`: a small Node server with no dependencies that serves only
+  `public/`, sets security headers, and reports its build at `/api/health`
+- tests (`npm test`)
+- a `Dockerfile` and `compose.yaml` for running it in a locked-down container
+- a GitHub Actions workflow that runs the tests, then publishes a container image:
+  a merge to `main` goes to staging, a published release goes to production
+- `deploy/update.sh`, which the server runs from cron to pull new images
+- a README describing all of it
+
+This is the same pipeline Roadie's change bar walks through. Files that already
+exist are never overwritten. From there, chat with the AI to turn it into your site.
+
+## Hosting guide
+
+**Hosting guide** (top right, once a site is open) walks through putting the site
+on a Linux server of your own: pointing your domain at it, opening the firewall,
+installing Docker and the Caddy web server, HTTPS, a staging copy, and automatic
+deploys. Each step says what it is for, gives the commands with a Copy button,
+and says what you should see when it has worked. Tick steps off as you go; Roadie
+remembers where you are.
+
+The commands are filled in with your site's domain, repo and image name. The
+install commands are the ones from the official Docker and Caddy guides, for
+Ubuntu or Debian.
+
+**Talk me through it** hands the guide to the AI, which takes you through it one
+step at a time in the chat, starting from the first step you have not ticked.
+**Ask the AI about this step** does the same for one step, which is the thing to
+use when a command prints an error.
+
+Roadie never connects to your server. You run every command yourself. Never paste
+passwords or tokens into the chat.
 
 ## The preview
 

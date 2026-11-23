@@ -16,6 +16,8 @@
       <button type="submit" id="open-btn">Open site</button>
     </form>
     <div id="site-info" class="site-info"></div>
+    <button type="button" id="starter-btn" hidden>Set up starter site</button>
+    <button type="button" id="guide-btn" hidden>Hosting guide</button>
     <button type="button" id="settings-btn" hidden>Site settings</button>
   </header>
 
@@ -97,6 +99,41 @@
         <button type="submit" id="settings-save" class="primary">Save and run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="starter-dialog">
+    <form id="starter-form" method="dialog">
+      <h2>This repo has no site in it yet</h2>
+      <p id="starter-intro" class="muted"></p>
+      <div class="fields">
+        <label>Site name <input name="title" maxlength="80" required></label>
+        <label>Domain <input name="domain" spellcheck="false" placeholder="optional, for example example.com">
+          <small>Used in the README and the hosting guide. Staging will be staging.&lt;your domain&gt;. You can leave this for later.</small>
+        </label>
+      </div>
+      <details class="file-list">
+        <summary>What gets created</summary>
+        <p class="muted">A small hand-coded site with no framework and no dependencies: a home page, a server that only serves the public folder, tests, a Docker image, and the automation that publishes merges to staging and releases to production. Files that already exist are left alone.</p>
+        <ul id="starter-files"></ul>
+      </details>
+      <p class="muted">The files are created on your machine only. Nothing is sent to GitHub.</p>
+      <div class="actions">
+        <button type="button" id="starter-cancel">Not now</button>
+        <button type="submit" class="primary">Create starter site</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="guide-dialog" class="wide">
+    <div class="guide-head">
+      <h2>Hosting guide</h2>
+      <span id="guide-progress" class="pill"></span>
+      <span class="spacer"></span>
+      <button type="button" id="guide-talk" class="primary">Talk me through it</button>
+      <button type="button" id="guide-close">Close</button>
+    </div>
+    <p id="guide-intro" class="muted"></p>
+    <div id="guide-steps"></div>
   </dialog>
 
   <dialog id="ai-dialog">

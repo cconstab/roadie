@@ -1,0 +1,23 @@
+# docker compose up -d             -> runs the image CI published ({{IMAGE}})
+# docker compose up -d --build     -> builds from this checkout instead
+# Settings come from .env (copy .env.example).
+# Staging runs from the same file with its own settings and project name:
+#   docker compose -p {{SLUG}}-staging --env-file .env.staging up -d
+services:
+  web:
+    build: .
+    # :latest is the newest release, :staging is the tip of main
+    image: {{IMAGE}}:${IMAGE_TAG:-latest}
+    container_name: ${CONTAINER_NAME:-{{SLUG}}}
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${PUBLISH_PORT:-8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    stop_grace_period: 10s

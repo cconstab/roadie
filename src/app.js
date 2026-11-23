@@ -8,9 +8,11 @@ import { aiStatus, createChat } from './agent.js';
 import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
 import { isSecretPath } from './guards.js';
+import { guideText, hostingGuide } from './guide.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
+import { blankKind, starterFileList, writeStarter } from './starter.js';
 import { runTests } from './tests.js';
 import { needsRestart, watchSite } from './watcher.js';
 
@@ -59,6 +61,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
       checks,
       busy,
       site: site && { ...site },
+      starterFiles: starterFileList(),
       ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
       chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null },
       preview: {
@@ -117,6 +120,17 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
     chat = null;
   }
 
+  async function ensureChat() {
+    if (!site) throw new Error('Open a site first.');
+    if (!chat) {
+      const status = aiStatus(ai);
+      if (!status.ready) throw new Error(status.problem);
+      const { sdk, z } = await agentSdk();
+      chat = createChat({ sdk, z, gitops, site, ai, runTests, emit: (update) => send('chat', update) });
+    }
+    return chat;
+  }
+
   async function open(repoInput) {
     const { owner, repo, key } = parseRepo(repoInput);
     busy = `Opening ${key}…`;
@@ -129,6 +143,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
       logs.length = 0;
       const opened = await openSite({ gitops, home, owner, repo });
       const found = detect(opened.dir);
+      // 'empty' or 'bare' when there is no site in the repo yet
+      const blank = blankKind(await gitops.listFiles(opened.dir));
       const saved = config.getSite(key);
       site = {
         key, owner, repo,
@@ -140,6 +156,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
         notes: found.notes,
         settings: saved || cleanSettings(found.settings),
         saved: !!saved,
+        blank,
       };
       watch();
     } finally {
@@ -161,15 +178,46 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
     'POST /api/preview/start': async () => { await serial(startPreview); return snapshot(); },
     'POST /api/preview/stop': async () => { await serial(() => runner.stop()); return snapshot(); },
 
-    'POST /api/chat/send': async (body) => {
+    // Put the starter site into a repo that has nothing in it yet.
+    'POST /api/starter': async (body) => {
       if (!site) throw new Error('Open a site first.');
-      if (!chat) {
-        const status = aiStatus(ai);
-        if (!status.ready) throw new Error(status.problem);
-        const { sdk, z } = await agentSdk();
-        chat = createChat({ sdk, z, gitops, site, ai, runTests, emit: (update) => send('chat', update) });
-      }
-      chat.send(body.text);
+      if (!site.blank) throw new Error('This repo already has files in it, so Roadie will not add the starter site.');
+      const result = writeStarter(site.dir, { owner: site.owner, repo: site.repo, title: body.title, domain: body.domain });
+      const found = detect(site.dir);
+      site.detected = found.settings;
+      site.notes = found.notes;
+      if (!site.saved) site.settings = cleanSettings(found.settings);
+      site.blank = null;
+      site.starter = { written: result.written, skipped: result.skipped };
+      pushState();
+      return snapshot();
+    },
+
+    'GET /api/guide': async () => {
+      if (!site) throw new Error('Open a site first.');
+      return { guide: hostingGuide(site), done: config.getGuideDone(site.key) };
+    },
+    'POST /api/guide/done': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      return { done: config.setGuideDone(site.key, body.id, !!body.done) };
+    },
+    // Ask the AI to talk the person through the guide, or one step of it.
+    'POST /api/guide/ask': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      const guide = hostingGuide(site);
+      const done = new Set(config.getGuideDone(site.key));
+      const step = guide.steps.find((s) => s.id === body.id) || guide.steps.find((s) => !done.has(s.id)) || guide.steps[0];
+      const finished = guide.steps.filter((s) => done.has(s.id)).map((s) => s.number);
+      const text = body.id
+        ? `Help me with step ${step.number} of the hosting guide: ${step.title}.`
+        : `Talk me through putting this site on a server, one step at a time. Start at step ${step.number}: ${step.title}.`;
+      const context = `This is Roadie's hosting guide for this site. Steps already ticked off: ${finished.length ? finished.join(', ') : 'none'}.\n\n${guideText(guide)}`;
+      (await ensureChat()).send(text, { context });
+      return { ok: true };
+    },
+
+    'POST /api/chat/send': async (body) => {
+      (await ensureChat()).send(body.text);
       return { ok: true };
     },
     'POST /api/chat/stop': async () => { await chat?.stop(); return { ok: true }; },

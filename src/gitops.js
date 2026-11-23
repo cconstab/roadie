@@ -93,8 +93,15 @@ export function createGitOps({ run = realRun } = {}) {
       return 'main';
     },
 
-    currentBranch(dir) {
+    // Works in a repo with no commits yet, too.
+    async currentBranch(dir) {
+      const r = await git(dir, ['symbolic-ref', '--short', 'HEAD']);
+      if (r.code === 0 && r.stdout.trim()) return r.stdout.trim();
       return must(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']), 'Reading the current branch');
+    },
+
+    async hasCommits(dir) {
+      return (await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD'])).code === 0;
     },
 
     async isClean(dir) {

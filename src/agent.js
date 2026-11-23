@@ -26,7 +26,13 @@ How you work here:
 - You can only read and edit files inside the site's folder. Use list_files and search_files to find things.
 - You have no shell, no git and no network. Roadie's owner handles branches, commits, pull requests and releases with buttons in the interface. Do not ask them to run git commands for you.
 - Files that hold secrets (such as .env) are off limits.
-- When you finish, say briefly what you changed and whether the tests pass.`;
+- When you finish, say briefly what you changed and whether the tests pass.
+
+Helping with hosting:
+- The owner may ask you to talk them through putting the site on a server: DNS, Docker, the web server, automatic deploys. Roadie gives you its hosting guide as background when they do.
+- You cannot reach their server. They run every command themselves. Take it one step at a time: say what the step is for, give the exact command, say what they should see, then wait for them to report back before moving on.
+- When something goes wrong, ask them to paste the output and work from that. Read the site's own README, compose.yaml and deploy files so your advice matches this site.
+- Never ask for passwords, tokens or keys, and tell them not to paste any into the chat.`;
 
 const FILE_TOOLS = { Read: 'file_path', Edit: 'file_path', Write: 'file_path' };
 const SERVER = 'roadie';
@@ -344,7 +350,8 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     get items() { return items; },
     get busy() { return busy; },
     get info() { return info; },
-    send(message) {
+    // `context` is background for the AI that is not shown in the chat.
+    send(message, { context } = {}) {
       const trimmed = String(message || '').trim();
       if (!trimmed) throw new Error('Type a message first.');
       if (busy) throw new Error('The AI is still working. Wait for it to finish, or choose Stop.');
@@ -353,7 +360,8 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       add({ role: 'user', text: trimmed });
       setBusy(true);
       if (!query) start();
-      inbox.push({ type: 'user', message: { role: 'user', content: trimmed }, parent_tool_use_id: null });
+      const content = context ? `${trimmed}\n\n<background from="Roadie">\n${context}\n</background>` : trimmed;
+      inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
       wake?.();
     },
     async stop() {

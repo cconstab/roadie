@@ -53,6 +53,9 @@ export async function openSite({ gitops, home, owner, repo }) {
   await gitops.fetch(dir);
   const defaultBranch = await gitops.defaultBranch(dir);
   const branch = await gitops.currentBranch(dir);
+  if (!(await gitops.hasCommits(dir))) {
+    return { dir, action: 'left', branch, defaultBranch, note: 'This repo has no commits yet.' };
+  }
   if (branch !== defaultBranch) {
     return { dir, action: 'left', branch, defaultBranch, note: `The clone is on branch ${branch}, so ${defaultBranch} was not pulled.` };
   }

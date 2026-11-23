@@ -37,6 +37,18 @@ Checked against `cconstab/3Chords.dev` (cloned and run locally only):
 - The test sandbox (macOS sandbox-exec) runs the 3Chords.dev tests fine, and blocks outside network access and writes to .git.
 - Roadie's git commands never run hooks from a site's clone.
 
+## Starter site and hosting guide (added after milestone 2)
+
+- A blank repo (no files, or only README/licence/.gitignore) is offered a starter site from `templates/starter`: a zero-dependency Node server, tests, Dockerfile, compose file, CI workflow and deploy script, following the 3Chords.dev pipeline.
+- Checked: the starter's own tests pass; Roadie detects all its settings; its Docker image builds, runs read-only as an unprivileged user, and reports healthy.
+- **Not checked: the starter's GitHub Actions workflow.** It has never run on GitHub. It is the 3Chords.dev workflow with names changed. Running it needs the throwaway repo.
+- The hosting guide gives DNS, firewall, Docker, Caddy, registry, first deploy and cron steps, filled in for the site. Install commands were copied from the official Docker, Caddy and GitHub docs in November 2026. They have not been run on a real server.
+- The AI can talk someone through the guide. Checked with a local Ollama model.
+
+## Decision needed
+
+- **First commit in an empty repo.** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Proposal: when, and only when, the GitHub repo has no commits at all, Start change offers a one-time "first commit" of the starter straight to `main`, with the usual confirmation. After that, `main` only changes through pull requests.
+
 ## Open items
 
 - Try the chat with a real ANTHROPIC_API_KEY.
