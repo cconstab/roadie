@@ -120,6 +120,17 @@ Line endings and paths:
 
 Things most likely to need attention on a real Windows run: the Claude Agent SDK's own Windows requirements; `gh auth git-credential` as a git credential helper under Git for Windows; site start commands written for `sh` (for example `PORT=3000 node server.js` in a package.json script) which `cmd.exe` cannot run; tests that create symlinks, which need Developer Mode or an administrator.
 
+## Release downloads and installers (added 2026-11-23)
+
+- `npm run package` (`scripts/package.mjs`) builds one self-contained archive per system into `dist/`: macOS, Linux and Windows, each for arm64 and x64. Each holds Node with npm (downloaded from nodejs.org and checked against its published checksums), Roadie's files unchanged, and the dependencies for that system. Nothing is compiled or bundled, and no new dependency was added. One machine builds all six.
+- `scripts/install.sh` and `scripts/install.ps1` download the right archive from the newest GitHub release, check it against the release's `SHA256SUMS`, and install it for the current user only (no administrator rights).
+- An installed Roadie lends its Node and npm to sites, placed after any the person has installed themselves.
+- `docs/release.yml` is a workflow that builds and attaches the downloads whenever a release is published. Like the CI workflow it is parked in `docs/` until the owner's gh sign-in has the `workflow` permission.
+
+Verified on macOS arm64: built all six archives; installed the macOS one through `install.sh` from a local server; ran it with no other Node on the PATH; ran a starter site's `npm test` in the sandbox using only the bundled npm; a download with a wrong checksum was refused. **Not verified:** the Linux and Windows archives were built and inspected but never run; `install.ps1` has never run; no release has been published, so the install commands in the README do not work yet.
+
+Why archives and not `.pkg`/`.msi` installers or a single executable: those need Apple and Microsoft code-signing certificates to install without warnings, and a single executable would need a bundling step. The Node program inside the archive is already signed by the Node.js project.
+
 ## Decision confirmed by the owner
 
 - **First commit in an empty repo (confirmed 2026-11-23).** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Roadie offers "Make the first commit" only when GitHub has no commits at all, with the usual confirmation, and refuses it ever after. This is the single exception to "never push to main".

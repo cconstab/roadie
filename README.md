@@ -8,15 +8,47 @@ machine without a click.
 
 ![Roadie: chat on the left, live preview in the middle, changed files on the right](docs/roadie.png)
 
-## Setup
+## Install
 
-Roadie runs on macOS, Linux and Windows. You need:
+Roadie runs on macOS, Linux and Windows. The download includes everything Roadie
+itself needs, including Node and npm, which your sites can use too if you have
+none installed (about 220 MB, most of it the AI component). Nothing needs
+administrator rights.
 
-- **Node 24** or newer
+macOS and Linux:
+
+```sh
+curl -fsSL https://github.com/cconstab/roadie/releases/latest/download/install.sh | sh
+```
+
+Windows, in PowerShell:
+
+```powershell
+irm https://github.com/cconstab/roadie/releases/latest/download/install.ps1 | iex
+```
+
+Then start it with `roadie`. The installer checks the download against the
+release's checksums and refuses it if they differ. Running it again updates
+Roadie; your sites and settings (in `~/roadie`) are left alone. To remove
+Roadie, delete `~/.local/share/roadie` and `~/.local/bin/roadie` (Windows:
+`%LOCALAPPDATA%\Roadie`).
+
+You can also download the archive for your system from the
+[releases page](https://github.com/cconstab/roadie/releases), unpack it anywhere
+and run the `roadie` program inside (`roadie.cmd` on Windows).
+
+You still need these, which Roadie checks for when it starts:
+
 - **git**, with your name and email set (on Windows: [Git for Windows](https://git-scm.com/download/win))
 - the **GitHub command-line tool `gh`**, signed in (`gh auth login`)
-- an **AI** to do the editing: an Anthropic API key, or [Ollama](https://ollama.com)
-  with a local model
+- an **AI** to do the editing: an Anthropic API key in `ANTHROPIC_API_KEY`, or
+  [Ollama](https://ollama.com) with a local model
+
+## Setup from source
+
+To run Roadie from this repo instead, you need the three things above and:
+
+- **Node 24** or newer
 
 ```sh
 git clone https://github.com/cconstab/roadie.git && cd roadie
@@ -43,7 +75,8 @@ in a sandbox (see [Rules Roadie enforces](#rules-roadie-enforces)). On Linux
 and Windows there is no sandbox yet, and Roadie warns you of that at the top of
 the window.
 
-`npm test` runs Roadie's own tests.
+`npm test` runs Roadie's own tests. `npm run package` builds the release
+downloads for every system into `dist/` (see `scripts/package.mjs`).
 
 ## Add a site
 

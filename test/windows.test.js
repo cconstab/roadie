@@ -171,3 +171,50 @@ test('Windows-only folder names are avoided for the site folder', async () => {
   assert.equal(folderName('con', 'darwin'), 'con');
   assert.match(siteDir('/home', 'aux', 'nul.dev', 'win32'), /aux_.nul\.dev_$/);
 });
+
+// --- the release downloads ------------------------------------------------------
+
+test('the release downloads cover each system, and their launchers suit it', async () => {
+  const { LAUNCHER_CMD, LAUNCHER_SH, TARGETS } = await import('../scripts/package.mjs');
+  assert.deepEqual(TARGETS.map((t) => t.name), ['macos-arm64', 'macos-x64', 'linux-x64', 'linux-arm64', 'windows-x64', 'windows-arm64']);
+  // cmd.exe wants CRLF; sh must not have it.
+  assert.ok(LAUNCHER_CMD.includes('\r\n') && !/[^\r]\n/.test(LAUNCHER_CMD));
+  assert.match(LAUNCHER_CMD, /"%~dp0runtime\\node\.exe" "%~dp0app\\src\\main\.js" %\*/);
+  assert.match(LAUNCHER_CMD, /setlocal\r\nset "ROADIE_RUNTIME_BIN=%~dp0runtime"/);
+  assert.doesNotMatch(LAUNCHER_SH, /\r/);
+  assert.match(LAUNCHER_SH, /ROADIE_RUNTIME_BIN="\$here\/runtime\/bin" exec "\$here\/runtime\/bin\/node" "\$here\/app\/src\/main\.js" "\$@"/);
+});
+
+test('the installers name the same downloads the packager builds, and check them', async () => {
+  const fs = await import('node:fs');
+  const { TARGETS } = await import('../scripts/package.mjs');
+  const sh = fs.readFileSync(new URL('../scripts/install.sh', import.meta.url), 'utf8');
+  const ps = fs.readFileSync(new URL('../scripts/install.ps1', import.meta.url), 'utf8');
+  assert.match(sh, /file="roadie-\$os-\$cpu\.tar\.gz"/);
+  assert.match(ps, /"roadie-windows-\$cpu\.zip"/);
+  for (const t of TARGETS) {
+    const [os, cpu] = t.name.split('-');
+    assert.ok((os === 'windows' ? ps : sh).includes(os) && (os === 'windows' ? ps : sh).includes(cpu), t.name);
+  }
+  for (const script of [sh, ps]) {
+    assert.match(script, /SHA256SUMS/);
+    assert.match(script, /does not match the release's checksum, so nothing was installed/);
+    assert.doesNotMatch(script, /sudo|RunAs/i, 'never asks for administrator rights');
+  }
+});
+
+test("an installed Roadie lends its Node and npm to sites, after the person's own", async (t) => {
+  const path = await import('node:path');
+  const { childEnv } = await import('../src/runner.js');
+  const saved = { PATH: process.env.PATH, bin: process.env.ROADIE_RUNTIME_BIN };
+  t.after(() => { process.env.PATH = saved.PATH; if (saved.bin === undefined) delete process.env.ROADIE_RUNTIME_BIN; else process.env.ROADIE_RUNTIME_BIN = saved.bin; });
+
+  delete process.env.ROADIE_RUNTIME_BIN;
+  assert.equal(childEnv({}).PATH, saved.PATH, 'run from source: PATH is left alone');
+
+  process.env.ROADIE_RUNTIME_BIN = '/opt/roadie/runtime/bin';
+  process.env.PATH = ['/usr/local/bin', '/usr/bin'].join(path.delimiter);
+  assert.equal(childEnv({}).PATH, ['/usr/local/bin', '/usr/bin', '/opt/roadie/runtime/bin'].join(path.delimiter), 'added last');
+  process.env.PATH = childEnv({}).PATH;
+  assert.equal(childEnv({}).PATH, process.env.PATH, 'and only once');
+});

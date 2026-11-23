@@ -55,6 +55,14 @@ export function childEnv(extra) {
   }
   // Git-hook installers (husky) cannot write to .git in the sandbox, and Roadie
   // never runs hooks anyway, so tell them to stand down.
+  // An installed Roadie brings Node and npm with it. Sites may use them, after
+  // any the person installed themselves (so their own version wins).
+  const bundled = env.ROADIE_RUNTIME_BIN;
+  if (bundled) {
+    const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH'; // "Path" on Windows
+    const parts = String(env[key] || '').split(path.delimiter).filter(Boolean);
+    if (!parts.includes(bundled)) env[key] = [...parts, bundled].join(path.delimiter);
+  }
   return { ...env, HUSKY: '0', ...extra };
 }
 
