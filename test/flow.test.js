@@ -495,3 +495,41 @@ test('a test run the AI asked for counts, but only for the files as they were th
   assert.equal(v.steps.find((s) => s.id === 'tests').status, 'failed');
   await assert.rejects(flow.prepare('pr'), /tests are failing/);
 });
+
+test('a change that touches workflow files warns when gh may not push them', async (t) => {
+  const { flow, edit, github, go, remote } = setup(t);
+  await flow.start({ description: 'Add CI' });
+  edit('.github/workflows/test.yml', 'name: tests\non: [push]\n');
+  await flow.tests();
+
+  github.state.scopes = ['gist', 'read:org', 'repo'];
+  const warned = await flow.prepare('pr');
+  assert.match(warned.plan.warning, /workflow file/);
+  assert.match(warned.plan.warning, /gh auth refresh -h github\.com -s workflow/);
+
+  github.state.scopes = ['repo', 'workflow'];
+  const fine = await flow.prepare('pr');
+  assert.equal(fine.plan.warning, null);
+  await go('pr');
+  assert.ok(remote.branches().includes('change/add-ci'));
+});
+
+test('when GitHub refuses a push, the reason and the fix are spelled out', async () => {
+  const refuse = (stderr) => createGitOps({ run: async (cmd, args) => (args.includes('push')
+    ? { code: 1, stdout: '', stderr, missing: false }
+    : { code: 0, stdout: '', stderr: '', missing: false }) });
+
+  const scope = await refuse(' ! [remote rejected] x -> x (refusing to allow an OAuth App to create or update workflow `.github/workflows/test.yml` without `workflow` scope)')
+    .push('/tmp', 'change/x', { defaultBranch: 'main' }).catch((e) => e);
+  assert.match(scope.message, /workflow file/);
+  assert.match(scope.message, /gh auth refresh -h github\.com -s workflow/);
+
+  const secret = await refuse('remote: error: GH013: Repository rule violations found for refs/heads/x.\nremote: - Push cannot contain secrets')
+    .push('/tmp', 'change/x', { defaultBranch: 'main' }).catch((e) => e);
+  assert.match(secret.message, /refused the push under one of the repo's rules/);
+  assert.match(secret.message, /Push cannot contain secrets/, 'GitHub\'s own words are kept');
+
+  const hostKey = await refuse('Host key verification failed.\nfatal: Could not read from remote repository.')
+    .push('/tmp', 'change/x', { defaultBranch: 'main' }).catch((e) => e);
+  assert.match(hostKey.message, /ssh -T git@github\.com/);
+});

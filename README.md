@@ -10,7 +10,7 @@ machine without a click.
 
 ## Setup
 
-You need:
+Roadie runs on macOS and Linux (on Windows, use WSL). You need:
 
 - **Node 24** or newer
 - **git**, with your name and email set

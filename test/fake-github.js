@@ -61,6 +61,7 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
     releases: [],
     checks: () => [{ name: 'npm test', state: 'SUCCESS', bucket: 'pass', link: `https://github.com/${slug}/actions/runs/1`, workflow: 'tests' }],
     repo: { squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: true },
+    scopes: ['gist', 'read:org', 'repo', 'workflow'],
     failNext: null,       // set to { match: /regex/, stderr: '...' } to make one gh command fail
   };
   const ok = (stdout = '') => ({ code: 0, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '', missing: false });
@@ -83,7 +84,7 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
     }
     const [group, verb] = args;
     if (group === '--version') return ok('gh version 2.0.0 (stand-in)\n');
-    if (group === 'auth' && verb === 'status') return ok('github.com\n  ✓ Logged in to github.com account demo (stand-in)\n');
+    if (group === 'auth' && verb === 'status') return ok(`github.com\n  ✓ Logged in to github.com account demo (stand-in)\n  - Token scopes: ${state.scopes.map((x) => `'${x}'`).join(', ')}\n`);
     const repo = flag(args, '-R') || args[2];
     if (group !== 'api' && repo !== slug) return bad(`GraphQL: Could not resolve to a Repository with the name '${repo}'.`);
 

@@ -11,6 +11,7 @@
 //   - The default branch is never committed or pushed to (gitops refuses too),
 //     except the one first commit of a repo that is empty on GitHub.
 import { branchName, changeView, healthMatches, healthVersion, nextVersions, summarizeChecks, testsVerdict } from './change.js';
+import { WORKFLOW_FIX } from './gitops.js';
 import { createConfirmations, scanForSecrets } from './guards.js';
 
 const short = (sha) => String(sha || '').slice(0, 7);
@@ -258,6 +259,16 @@ export function createFlow({
     return changes.map((c) => ({ path: c.path, status: c.status }));
   }
 
+  // GitHub refuses a push that touches workflow files unless gh's sign-in has
+  // the "workflow" permission. Say so before the push rather than after.
+  async function workflowWarning(changes) {
+    if (!changes.some((c) => /^\.github\/workflows\//.test(c.path))) return null;
+    const scopes = await gitops.ghScopes().catch(() => null);
+    if (!scopes || scopes.includes('workflow')) return null;
+    return `This change includes a GitHub Actions workflow file, and your gh sign-in is not allowed to push those, so GitHub will refuse it. ${WORKFLOW_FIX}`;
+  }
+  const joinWarnings = (...parts) => parts.filter(Boolean).join('\n\n') || null;
+
   function checkSecrets(changes) {
     const findings = scanForSecrets({ files: changes.filter((c) => c.status !== 'deleted').map((c) => c.path), additions: additionsFromChanges(changes) });
     if (findings.length) throw fail(secretsMessage(findings), { findings });
@@ -281,6 +292,7 @@ export function createFlow({
         summary: `${s.key} is empty on GitHub. This puts ${f.filesChanged} file${f.filesChanged === 1 ? '' : 's'} on ${f.defaultBranch} as its first commit. It is the only time Roadie pushes to ${f.defaultBranch}: every later change goes through a pull request.`,
         commands: ['git add -A', `git commit -m ${JSON.stringify(message)}`, `git push origin ${f.defaultBranch}`],
         files: commitPlanFiles(f.changes),
+        warning: await workflowWarning(f.changes),
         message, fingerprint,
         sends: `${f.filesChanged} files to github.com/${s.key} (branch ${f.defaultBranch})`,
       });
@@ -325,7 +337,10 @@ export function createFlow({
         summary: action === 'pr'
           ? `Commits your changes to the branch ${r.branch}, pushes it to GitHub, and opens a pull request into ${f.defaultBranch}. Nothing is merged.`
           : `Commits your newer changes to ${r.branch} and pushes them. Pull request #${r.pr.number} picks them up and its checks run again.`,
-        warning: override ? (verdict === 'failed' ? 'The tests are failing. You are choosing to send this anyway.' : 'The tests have not been run on these files. You are choosing to send this anyway.') : null,
+        warning: joinWarnings(
+          override ? (verdict === 'failed' ? 'The tests are failing. You are choosing to send this anyway.' : 'The tests have not been run on these files. You are choosing to send this anyway.') : null,
+          await workflowWarning(f.changes),
+        ),
         commands,
         files: commitPlanFiles(f.changes),
         editable: { title, body: action === 'pr' ? body : undefined },
@@ -402,7 +417,7 @@ export function createFlow({
       return confirmations.prepare(action, {
         title: 'Abandon this change',
         summary: `Goes back to ${f.defaultBranch}.`
-          + (uncommitted ? ` Your ${uncommitted} uncommitted file${uncommitted === 1 ? '' : 's'} are set aside in git's stash, not deleted: "git stash list" in the site folder shows them.` : '')
+          + (uncommitted ? ` Your ${uncommitted} uncommitted file${uncommitted === 1 ? ' is' : 's are'} set aside in git's stash, not deleted: "git stash list" in the site folder shows ${uncommitted === 1 ? 'it' : 'them'}.` : '')
           + ` The branch ${r.branch} stays on this machine.`
           + (r.pr && !r.merge ? ` Pull request #${r.pr.number} stays open on GitHub; close it there if you no longer want it.` : ''),
         commands: [...(uncommitted ? [`git stash push --include-untracked -m "roadie: ${r.branch}"`] : []), `git switch ${f.defaultBranch}`],

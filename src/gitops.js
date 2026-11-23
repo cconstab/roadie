@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from './exec.js';
 
+export const WORKFLOW_FIX = 'In a terminal run "gh auth refresh -h github.com -s workflow", follow its instructions, then try again.';
+
 export function createGitOps({ run = realRun } = {}) {
   // Never let git or gh stop to ask a question in a terminal nobody is watching.
   const env = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1' });
@@ -23,6 +25,9 @@ export function createGitOps({ run = realRun } = {}) {
     }
     if (/Permission denied \(publickey\)/i.test(detail)) {
       return ' This clone talks to GitHub over SSH, and GitHub did not accept your SSH key. Check "ssh -T git@github.com" in a terminal.';
+    }
+    if (/without `?workflow`? scope/i.test(detail)) {
+      return ` GitHub refused because this change adds or edits a workflow file (under .github/workflows), and your gh sign-in is not allowed to do that. ${WORKFLOW_FIX}`;
     }
     if (/GH013|push declined due to repository rule violations|secret-scanning/i.test(detail)) {
       return ' GitHub refused the push under one of the repo\'s rules. If it names a secret, remove that secret from the files and try again; the details are below.';
@@ -77,6 +82,13 @@ export function createGitOps({ run = realRun } = {}) {
         ? { id: 'gh-auth', ok: true, detail: account ? `signed in to GitHub as ${account}` : 'signed in to GitHub' }
         : { id: 'gh-auth', ok: false, detail: 'gh is not signed in to GitHub.', fix: 'Run "gh auth login" in a terminal, then restart Roadie.' });
       return checks;
+    },
+
+    // The permissions gh's sign-in has, or null when gh does not say (some token kinds do not).
+    async ghScopes() {
+      const r = await run('gh', ['auth', 'status', '--hostname', 'github.com']);
+      const m = `${r.stdout}\n${r.stderr}`.match(/Token scopes:\s*(.+)/);
+      return m ? m[1].split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean) : null;
     },
 
     clone(slug, dir) {

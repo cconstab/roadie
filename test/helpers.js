@@ -33,6 +33,7 @@ export function fakeGitOps(overrides = {}) {
     currentBranch: record('currentBranch', 'main'),
     isClean: record('isClean', true),
     hasCommits: record('hasCommits', true),
+    ghScopes: record('ghScopes', ['repo', 'workflow']),
     listFiles: record('listFiles', ['index.html']),
     changes: record('changes', []),
     fetch: record('fetch'),

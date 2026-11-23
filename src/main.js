@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 // npm start: run Roadie on 127.0.0.1 and open it in the browser.
 import { spawn } from 'node:child_process';
+
+if (Number(process.versions.node.split('.')[0]) < 24) {
+  console.error(`Roadie needs Node 24 or newer. This is Node ${process.versions.node}. Install a newer Node from https://nodejs.org and try again.`);
+  process.exit(1);
+}
+if (process.platform === 'win32') {
+  console.error('Roadie runs on macOS and Linux. On Windows, run it inside WSL.');
+  process.exit(1);
+}
 import { createApp } from './app.js';
 import { createConfig, roadieHome } from './config.js';
 import { createGitOps } from './gitops.js';

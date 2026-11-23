@@ -28,8 +28,15 @@ const MAX_DIFF_CHARS = 200_000;
 
 // The Agent SDK is loaded on first use, so Roadie starts quickly and tests can pass a fake.
 async function loadSdk() {
-  const [sdk, { z }] = await Promise.all([import('@anthropic-ai/claude-agent-sdk'), import('zod')]);
-  return { sdk, z };
+  try {
+    const [sdk, { z }] = await Promise.all([import('@anthropic-ai/claude-agent-sdk'), import('zod')]);
+    return { sdk, z };
+  } catch (err) {
+    if (err.code === 'ERR_MODULE_NOT_FOUND') {
+      throw new Error("The AI's software is not installed. Run \"npm install\" in Roadie's folder, then start Roadie again.");
+    }
+    throw err;
+  }
 }
 
 export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {} }) {

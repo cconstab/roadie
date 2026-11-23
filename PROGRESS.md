@@ -61,6 +61,8 @@ Built while the owner was away, so without the throwaway GitHub repo.
 
 ## Open items
 
+- **Turn on CI for Roadie itself.** `docs/ci-test.yml` is a ready workflow (npm test on Ubuntu and macOS). It could not be pushed into place because the owner's gh sign-in lacks the `workflow` permission. To enable: `gh auth refresh -h github.com -s workflow`, then `mkdir -p .github/workflows && git mv docs/ci-test.yml .github/workflows/test.yml`, commit and push. Roadie's tests have therefore **not been run on Linux**.
+
 - Try the chat with a real ANTHROPIC_API_KEY.
 - Test sandbox for Linux (bubblewrap or similar). Today Linux runs tests unsandboxed.
 - Chat history is kept in memory only; restarting Roadie starts a fresh conversation.
