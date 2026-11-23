@@ -126,7 +126,9 @@ test('with no start command the folder is served as static files', async (t) => 
   assert.equal(await (await fetch(base + '/about')).text(), '<h1>about</h1>');
   assert.match((await fetch(base + '/css/site.css')).headers.get('content-type'), /text\/css/);
 
-  for (const hidden of ['/.env', '/.git/config', '/missing.html', '/%2e%2e/%2e%2e/etc/passwd']) {
+  // A link to a dotfile, and the Windows spellings of one, are hidden too.
+  try { fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'settings.txt')); } catch { /* no symlinks here */ }
+  for (const hidden of ['/.env', '/.git/config', '/missing.html', '/%2e%2e/%2e%2e/etc/passwd', '/settings.txt', '/index.html::$DATA', '/about.html.', '/css%20/site.css']) {
     assert.equal((await fetch(base + hidden)).status, 404, hidden);
   }
   assert.equal((await fetch(base + '/', { method: 'POST' })).status, 405);

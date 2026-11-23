@@ -15,7 +15,10 @@ const MIME = {
 };
 
 export function createStaticServer(root) {
-  const base = fs.realpathSync(root);
+  // The system's own resolver: on Windows it also turns short names (ENV~1) into real ones.
+  const base = fs.realpathSync.native(root);
+  // Hidden: dotfiles, and on Windows the other spellings of them (".env.", ".env::$DATA").
+  const hidden = (p) => p.startsWith('.') || p.includes(':') || /[. ]$/.test(p);
 
   return http.createServer((req, res) => {
     const notFound = () => {
@@ -39,15 +42,17 @@ export function createStaticServer(root) {
     try { rel = decodeURIComponent(new URL(req.url, 'http://local').pathname); } catch { return notFound(); }
     const parts = rel.split('/').filter(Boolean);
     // No dotfiles (.git, .env) and no stepping out of the folder.
-    if (parts.some((p) => p.startsWith('.'))) return notFound();
+    if (parts.some(hidden)) return notFound();
     let file = path.join(base, ...parts);
     if (file !== base && !file.startsWith(base + path.sep)) return notFound();
 
     fs.stat(file, (err, stat) => {
       if (!err && stat.isDirectory()) file = path.join(file, 'index.html');
       else if (err && !path.extname(file)) file += '.html';
-      fs.realpath(file, (err2, real) => {
+      fs.realpath.native(file, (err2, real) => {
         if (err2 || (real !== base && !real.startsWith(base + path.sep))) return notFound();
+        // Checked again on the real name, so a link or a short name cannot lead to a dotfile.
+        if (path.relative(base, real).split(path.sep).some(hidden)) return notFound();
         fs.stat(real, (err3, st) => {
           if (err3 || !st.isFile()) return notFound();
           res.writeHead(200, {
