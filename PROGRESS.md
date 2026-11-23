@@ -15,9 +15,9 @@ Task tracking for this project lives in this file.
 
 - [x] 1. Open a site: clone, detect commands, run it, live preview through the proxy
 - [x] 2. Chat: the AI edits files in the site, preview reloads, diffs show
-- [ ] 3. Start change, Run tests, Open PR
-- [ ] 4. CI status, Merge, Staging check
-- [ ] 5. Release, Production check, README, final test pass
+- [x] 3. Start change, Run tests, Open PR (built and tested against a stand-in GitHub; see below)
+- [x] 4. CI status, Merge, Staging check (same)
+- [x] 5. Release, Production check, README, final test pass (same)
 
 ## Milestone 1 notes
 
@@ -45,9 +45,19 @@ Checked against `cconstab/3Chords.dev` (cloned and run locally only):
 - The hosting guide gives DNS, firewall, Docker, Caddy, registry, first deploy and cron steps, filled in for the site. Install commands were copied from the official Docker, Caddy and GitHub docs in November 2026. They have not been run on a real server.
 - The AI can talk someone through the guide. Checked with a local Ollama model.
 
-## Decision needed
+## Milestones 3 to 5: the change bar
 
-- **First commit in an empty repo.** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Proposal: when, and only when, the GitHub repo has no commits at all, Start change offers a one-time "first commit" of the starter straight to `main`, with the usual confirmation. After that, `main` only changes through pull requests.
+Built while the owner was away, so without the throwaway GitHub repo.
+
+- `src/change.js` is the state machine, a pure function of facts. `src/flow.js` carries a change through the steps. `src/guards.js` holds the secret scan and the one-time confirmations.
+- Tested end to end with **real git** against a local bare repository standing in for GitHub, and a **fake gh** (`test/fake-github.js`) that really merges and tags in that repository. The whole flow was also clicked through in Chrome against that stand-in, from an empty repo to a live release.
+- The **read** formats of gh (pull request, checks, releases, repo settings) were checked against real data from cconstab/3Chords.dev.
+- **Never run against GitHub itself:** `git push` over HTTPS with gh's sign-in, `gh pr create`, `gh pr merge`, `gh release create`, and GitHub's release-notes call. These are the first things to try with a throwaway repo.
+- GitHub's push protection may refuse a push that contains a secret Roadie's own scan missed. Roadie reports that refusal; it does not try to get round it.
+
+## Decision taken, to confirm with the owner
+
+- **First commit in an empty repo.** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Roadie offers "Make the first commit" only when GitHub has no commits at all, with the usual confirmation, and refuses it ever after. This is the single exception to "never push to main". It was implemented without the owner's answer; say if it should go.
 
 ## Open items
 
@@ -56,4 +66,4 @@ Checked against `cconstab/3Chords.dev` (cloned and run locally only):
 - Chat history is kept in memory only; restarting Roadie starts a fresh conversation.
 
 - Preview: a site whose pages redirect to an absolute URL on its own port would leave the proxy. Not seen yet; handle if a real site does it.
-- Milestone 3 needs a throwaway GitHub repo from the user.
+- Run the change bar against a real throwaway GitHub repo (ideally an empty one, to cover the first commit and the starter's workflow too).

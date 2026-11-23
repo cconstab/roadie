@@ -63,6 +63,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       busy,
       site: site && { ...site },
       starterFiles: starterFileList(),
+      knownSites: config.siteKeys(),
       ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
       chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null },
       preview: {
@@ -140,7 +141,12 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       const status = aiStatus(ai);
       if (!status.ready) throw new Error(status.problem);
       const { sdk, z } = await agentSdk();
-      chat = createChat({ sdk, z, gitops, site, ai, runTests, emit: (update) => send('chat', update) });
+      const runAndRecord = async (options) => {
+        const result = await runTests(options);
+        await flow.recordTests(result).catch(() => {});
+        return result;
+      };
+      chat = createChat({ sdk, z, gitops, site, ai, runTests: runAndRecord, emit: (update) => send('chat', update) });
     }
     return chat;
   }
@@ -173,7 +179,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         blank,
       };
       watch();
-      flow.notify();
+      flow.refresh().then(() => flow.notify(), () => flow.notify());
     } finally {
       busy = null;
       pushState();

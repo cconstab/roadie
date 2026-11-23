@@ -219,6 +219,23 @@ export function createFlow({
     });
   }
 
+  // Record a run of the site's test command that happened outside the button
+  // (the AI's run_tests tool uses the very same runner).
+  async function recordTests(result) {
+    const s = getSite();
+    if (!s) return;
+    testOutput = result.output || '';
+    const r = config.getChange(s.key);
+    if (r && result.code !== null) {
+      config.saveChange(s.key, {
+        ...r,
+        override: null,
+        tests: { passed: result.passed, code: result.code, tree: await gitops.treeId(s.dir), at: now(), sandboxed: result.sandboxed, by: 'ai' },
+      });
+    }
+    notify();
+  }
+
   // What to hand the AI when a step fails.
   async function aiRequest(kind) {
     const r = record();
@@ -573,5 +590,5 @@ export function createFlow({
     return (r && r.base) || 'HEAD';
   }
 
-  return { view, notify, start, tests, prepare, confirm, health, finish, refresh, aiRequest, base, stop: stopPolling };
+  return { view, notify, start, tests, recordTests, prepare, confirm, health, finish, refresh, aiRequest, base, stop: stopPolling };
 }

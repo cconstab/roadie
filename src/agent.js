@@ -45,7 +45,7 @@ export function checkToolUse(siteDir, toolName, input) {
     const verdict = checkSitePath(siteDir, input && input[FILE_TOOLS[toolName]]);
     return verdict.ok ? null : verdict.reason;
   }
-  if (ROADIE_TOOLS.includes(toolName)) return null;
+  if (ROADIE_TOOLS.includes(toolName) || ROADIE_TOOLS.includes(`mcp__${SERVER}__${toolName}`)) return null; // short names are aliases
   return `${toolName} is not available here. Use Read, Edit, Write, list_files, search_files or run_tests.`;
 }
 
@@ -190,6 +190,8 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
       }],
     },
     mcpServers: { [SERVER]: roadieTools({ sdk, z, gitops, site, runTests }) },
+    // Some models call Roadie's tools by their short names; send those to the real ones.
+    toolAliases: { list_files: `mcp__${SERVER}__list_files`, search_files: `mcp__${SERVER}__search_files`, run_tests: `mcp__${SERVER}__run_tests` },
     strictMcpConfig: true,                   // no MCP servers from this machine's config
     settingSources: [],                      // no user or project settings, hooks or CLAUDE.md
     skills: [],

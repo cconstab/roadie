@@ -24,6 +24,12 @@ export function createGitOps({ run = realRun } = {}) {
     if (/Permission denied \(publickey\)/i.test(detail)) {
       return ' This clone talks to GitHub over SSH, and GitHub did not accept your SSH key. Check "ssh -T git@github.com" in a terminal.';
     }
+    if (/GH013|push declined due to repository rule violations|secret-scanning/i.test(detail)) {
+      return ' GitHub refused the push under one of the repo\'s rules. If it names a secret, remove that secret from the files and try again; the details are below.';
+    }
+    if (/protected branch|GH006/i.test(detail)) {
+      return ' GitHub refused because that branch is protected.';
+    }
     if (/Repository not found|Could not resolve to a Repository/i.test(detail)) {
       return ' Check the owner/repo spelling, and that the account gh is signed in to can see it.';
     }

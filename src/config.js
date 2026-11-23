@@ -87,6 +87,9 @@ export function createConfig(home = roadieHome()) {
       save(data);
       return data.sites[key];
     },
+    siteKeys() {
+      return Object.keys(load().sites).sort((a, b) => a.localeCompare(b));
+    },
     lastSite() {
       return load().lastSite || null;
     },

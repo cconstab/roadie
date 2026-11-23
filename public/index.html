@@ -12,7 +12,8 @@
     <h1>Roadie</h1>
     <form id="open-form" class="open">
       <label for="repo" class="sr">GitHub repository</label>
-      <input id="repo" name="repo" placeholder="owner/repo" autocomplete="off" spellcheck="false" required>
+      <input id="repo" name="repo" placeholder="owner/repo" autocomplete="off" spellcheck="false" list="known-sites" required>
+      <datalist id="known-sites"></datalist>
       <button type="submit" id="open-btn">Open site</button>
     </form>
     <div id="site-info" class="site-info"></div>
@@ -24,11 +25,13 @@
   <div id="problems" class="problems" hidden></div>
 
   <nav class="change-bar" aria-label="Change progress">
-    <ol id="steps">
-      <li>Start change</li><li>Run tests</li><li>Open PR</li><li>CI</li>
-      <li>Merge</li><li>Staging</li><li>Release</li><li>Production</li>
-    </ol>
-    <span class="hint">The change bar arrives in milestone 3.</span>
+    <div class="change-row">
+      <ol id="steps"></ol>
+      <span class="spacer"></span>
+      <span id="change-also" class="also"></span>
+      <button type="button" id="next-btn" class="primary" disabled>Start change</button>
+    </div>
+    <div id="change-detail" class="change-detail" hidden></div>
   </nav>
 
   <main class="panes">
@@ -92,11 +95,69 @@
         <label>Staging URL <input name="stagingUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="stagingUrl"></small></label>
         <label>Production URL <input name="productionUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="productionUrl"></small></label>
         <label>Health-check path <input name="healthPath" spellcheck="false" placeholder="optional, e.g. /api/health"><small data-note="healthPath"></small></label>
+        <label>How pull requests are merged
+          <select name="mergeMethod">
+            <option value="squash">Squash: one commit per change</option>
+            <option value="merge">Merge commit</option>
+            <option value="rebase">Rebase</option>
+          </select>
+        </label>
       </div>
       <p class="muted">Saved in Roadie's own config, never in the site's repo.</p>
       <div class="actions">
         <button type="button" id="settings-cancel">Cancel</button>
         <button type="submit" id="settings-save" class="primary">Save and run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="start-dialog">
+    <form id="start-form" method="dialog">
+      <h2>Start a change</h2>
+      <p class="muted" id="start-intro"></p>
+      <div class="fields">
+        <label>What is this change? <input name="description" maxlength="120" placeholder="for example: make the heading friendlier" autocomplete="off">
+          <small>Used to name the branch and to draft the pull request. You can leave it empty.</small>
+        </label>
+      </div>
+      <div class="actions">
+        <button type="button" id="start-cancel">Cancel</button>
+        <button type="submit" class="primary">Start change</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="tests-dialog" class="wide">
+    <div class="guide-head">
+      <h2>Tests</h2>
+      <span id="tests-status" class="pill"></span>
+      <span class="spacer"></span>
+      <button type="button" id="tests-ask" hidden>Ask the AI to fix it</button>
+      <button type="button" id="tests-close">Close</button>
+    </div>
+    <p id="tests-note" class="muted"></p>
+    <pre id="tests-output" class="log tall"></pre>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="wide">
+    <form id="confirm-form" method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-summary"></p>
+      <p id="confirm-warning" class="warning" hidden></p>
+      <div id="confirm-fields" class="fields"></div>
+      <details id="confirm-files-box" class="file-list" hidden>
+        <summary id="confirm-files-summary"></summary>
+        <ul id="confirm-files"></ul>
+      </details>
+      <div id="confirm-commands-box">
+        <div class="cmd-label"><span>Exactly what Roadie will run</span></div>
+        <pre id="confirm-commands" class="plan"></pre>
+      </div>
+      <p id="confirm-sends" class="muted"></p>
+      <p id="confirm-error" class="warning" hidden></p>
+      <div class="actions">
+        <button type="button" id="confirm-cancel">Cancel</button>
+        <button type="submit" id="confirm-go" class="primary"></button>
       </div>
     </form>
   </dialog>

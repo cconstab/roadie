@@ -32,10 +32,18 @@ function showProblem(message) {
   box.hidden = false;
   const p = document.createElement('p');
   p.textContent = message;
-  box.replaceChildren(p);
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.textContent = 'Dismiss';
+  close.addEventListener('click', () => { problemShown = false; renderProblems(); });
+  problemShown = true;
+  box.replaceChildren(p, close);
 }
 
+let problemShown = false; // a message from showProblem stays until dismissed
+
 function renderProblems() {
+  if (problemShown) return;
   const bad = state.checks.filter((c) => !c.ok);
   const box = $('problems');
   if (!bad.length) { box.hidden = true; box.replaceChildren(); return; }
@@ -56,6 +64,7 @@ function render() {
   const { site, preview, busy } = state;
   renderProblems();
 
+  $('known-sites').replaceChildren(...(state.knownSites || []).map((key) => new Option(key, key)));
   $('open-btn').disabled = !!busy;
   $('open-btn').textContent = busy ? 'Opening…' : 'Open site';
   $('settings-btn').hidden = !site;
@@ -66,8 +75,8 @@ function render() {
   if (site) {
     const strong = document.createElement('strong');
     strong.textContent = site.key;
-    info.replaceChildren(strong, ` on ${site.branch}. ${site.note}`);
-    info.title = site.dir;
+    info.replaceChildren(strong, ` in ${site.dir}`);
+    info.title = site.note;
   } else {
     info.textContent = busy || '';
   }
@@ -351,7 +360,7 @@ function setState(next) {
   state = next;
   if (next.chat) syncChat(next.chat);
   render();
-  if ((next.site && next.site.key) !== siteBefore) { openDiffs.clear(); refreshChanges(0); }
+  if ((next.site && next.site.key) !== siteBefore) { openDiffs.clear(); refreshChanges(0); loadChange(); }
 }
 
 // --- events from the page -------------------------------------------------
@@ -495,6 +504,295 @@ $('guide-btn').addEventListener('click', showGuide);
 $('guide-close').addEventListener('click', () => $('guide-dialog').close());
 $('guide-talk').addEventListener('click', () => askGuide(null));
 
+// --- the change bar --------------------------------------------------------------
+
+let change = { open: false };
+let changeWorking = null; // text shown on the button while a click is being handled
+
+const CONFIRM_LABELS = {
+  'first-commit': 'Commit and push to main',
+  pr: 'Push and open the pull request',
+  'update-pr': 'Push the update',
+  merge: 'Merge',
+  release: 'Publish the release',
+  discard: 'Abandon the change',
+};
+
+function link(href, text) {
+  const a = document.createElement('a');
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.textContent = text;
+  return a;
+}
+
+function span(text, className) {
+  const el = document.createElement('span');
+  el.textContent = text;
+  if (className) el.className = className;
+  return el;
+}
+
+function renderChange() {
+  const steps = $('steps');
+  const next = $('next-btn');
+  const also = $('change-also');
+  const detail = $('change-detail');
+
+  if (!change.open) {
+    steps.replaceChildren(...['Start change', 'Run tests', 'Open PR', 'CI', 'Merge', 'Staging', 'Release', 'Production'].map((label) => {
+      const li = document.createElement('li');
+      li.textContent = label;
+      return li;
+    }));
+    next.textContent = 'Start change';
+    next.disabled = true;
+    next.title = 'Open a site first.';
+    also.replaceChildren();
+    detail.hidden = true;
+    return;
+  }
+
+  steps.replaceChildren(...change.steps.map((step) => {
+    const li = document.createElement('li');
+    li.className = step.status;
+    li.title = step.detail || '';
+    const href = step.id === 'pr' && change.pr ? change.pr.url
+      : step.id === 'release' && change.release && change.release.url ? change.release.url
+      : step.id === 'staging' && step.status === 'done' ? change.links.staging
+      : step.id === 'production' && step.status === 'done' ? change.links.production
+      : null;
+    const label = step.id === 'pr' && change.pr ? `PR #${change.pr.number}`
+      : step.id === 'release' && change.release ? `Release ${change.release.tag}`
+      : step.label;
+    li.append(href ? link(href, label) : label);
+    return li;
+  }));
+
+  const busy = change.busy || changeWorking;
+  next.textContent = busy || (change.next ? change.next.label : 'Done');
+  next.disabled = !!busy || !change.next || !change.next.enabled;
+  next.title = change.next && change.next.why ? change.next.why : '';
+  next.dataset.action = change.next ? change.next.id : '';
+
+  also.replaceChildren(...(busy ? [] : change.also || []).map((item) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = item.label;
+    b.addEventListener('click', () => changeAction(item.id));
+    return b;
+  }));
+  if (change.testOutput && !busy) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = 'Test output';
+    b.addEventListener('click', () => showTests());
+    also.prepend(b);
+  }
+
+  // The line under the bar: where things stand, in words.
+  const parts = [];
+  if (change.stage !== 'idle' && change.stage !== 'first-commit') {
+    const b = document.createElement('span');
+    b.append('Branch ', Object.assign(document.createElement('strong'), { textContent: change.branch }));
+    parts.push(b);
+  }
+  if (change.note) parts.push(span(change.note));
+  if (change.next && !change.next.enabled && change.next.why) parts.push(span(change.next.why));
+  if (change.stage === 'pr-open' && change.checks.length) {
+    const box = document.createElement('span');
+    box.append('Checks: ');
+    change.checks.forEach((check, i) => {
+      if (i) box.append(', ');
+      const mark = check.bucket === 'pass' || check.bucket === 'skipping' ? '✓ ' : check.bucket === 'pending' ? '… ' : '✕ ';
+      const a = check.link ? link(check.link, mark + check.name) : span(mark + check.name);
+      if (check.bucket === 'fail' || check.bucket === 'cancel') a.className = 'bad';
+      box.append(a);
+    });
+    parts.push(box);
+  }
+  for (const which of ['staging', 'production']) {
+    const h = change[which];
+    if (!h || !(h.live || h.polling || h.timedOut)) continue;
+    const box = document.createElement('span');
+    if (h.live) box.append(span(`${which === 'staging' ? 'Staging' : 'Production'} is live on ${h.seen || h.waitingFor}. `, 'ok'), link(h.url.replace(/\/[^/]*$/, '') || h.url, 'Open it'));
+    else if (h.polling) box.append(`Waiting for ${which} to report ${h.waitingFor}. `, h.error ? span(h.error, 'bad') : (h.seen ? `It is on ${h.seen} now.` : ''), ' Deploys usually take a few minutes.');
+    else if (h.timedOut) box.append(span(`${which} never reported ${h.waitingFor}. It is on ${h.seen || 'an unknown build'}. Check the deploy on the server.`, 'bad'));
+    if (box.childNodes.length) parts.push(box);
+  }
+  if (change.remoteError) parts.push(span(`Could not reach GitHub: ${change.remoteError}`, 'bad'));
+  detail.replaceChildren(...parts);
+  detail.hidden = !parts.length;
+}
+
+function setChange(next) {
+  if (!next || next.testChunk !== undefined) return;
+  change = next;
+  renderChange();
+}
+
+async function loadChange() {
+  try { setChange(await api('GET', '/api/change')); } catch (err) { showProblem(err.message); }
+}
+
+async function working(text, fn) {
+  changeWorking = text;
+  renderChange();
+  try { return await fn(); }
+  catch (err) { showProblem(err.message); }
+  finally { changeWorking = null; renderChange(); refreshChanges(0); }
+}
+
+function showTests(result) {
+  const out = $('tests-output');
+  out.textContent = result ? result.output : change.testOutput || '';
+  out.scrollTop = out.scrollHeight;
+  const passed = result ? result.passed : change.tests && change.tests.passed;
+  const pill = $('tests-status');
+  pill.textContent = result === null ? 'running…' : passed ? 'passed' : 'failed';
+  pill.className = 'pill ' + (result === null ? 'starting' : passed ? 'running' : 'failed');
+  $('tests-ask').hidden = result === null || passed;
+  const sandboxed = result ? result.sandboxed : change.tests && change.tests.sandboxed;
+  $('tests-note').textContent = result === null ? '' : sandboxed
+    ? 'Run in a sandbox: no network beyond this machine, and no writing to the site\'s .git folder.'
+    : 'Run without a sandbox (only available on macOS for now).';
+  if (!$('tests-dialog').open) $('tests-dialog').showModal();
+}
+
+async function runTestsNow() {
+  $('tests-output').textContent = '';
+  showTests(null);
+  await working('Running tests…', async () => {
+    const result = await api('POST', '/api/change/tests');
+    showTests(result);
+    await loadChange();
+  });
+}
+
+let pending = null; // the plan on screen: { token, action, plan }
+
+function field(labelText, control, hint) {
+  const label = document.createElement('label');
+  label.append(labelText, control);
+  if (hint) label.append(Object.assign(document.createElement('small'), { textContent: hint }));
+  return label;
+}
+
+function showPlan(prepared) {
+  pending = prepared;
+  const { plan, action } = prepared;
+  $('confirm-title').textContent = plan.title;
+  $('confirm-summary').textContent = plan.summary;
+  $('confirm-warning').textContent = plan.warning || '';
+  $('confirm-warning').hidden = !plan.warning;
+  $('confirm-error').hidden = true;
+
+  const fields = [];
+  if (action === 'release') {
+    const row = document.createElement('div');
+    row.className = 'versions';
+    for (const [kind, tag] of [['patch', plan.versions.patch], ['minor', plan.versions.minor], ['major', plan.versions.major]]) {
+      const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'tag', value: tag, checked: tag === plan.tag });
+      // A different version means different notes, so the step is prepared again.
+      radio.addEventListener('change', () => prepareStep('release', { tag }));
+      const label = document.createElement('label');
+      label.append(radio, `${tag} (${kind})`);
+      row.append(label);
+    }
+    const wrap = document.createElement('div');
+    wrap.append(Object.assign(document.createElement('strong'), { textContent: plan.versions.latest ? `Version (the latest is ${plan.versions.latest})` : 'Version (this is the first release)' }), row);
+    fields.push(wrap);
+  }
+  if (plan.editable && plan.editable.title !== undefined) {
+    const input = Object.assign(document.createElement('input'), { name: 'title', value: plan.editable.title, maxLength: 200, required: true });
+    fields.push(field(action === 'pr' ? 'Pull request title' : 'Commit message', input,
+      plan.drafted === 'ai' ? 'Drafted by the AI. Edit it if you like.' : plan.drafted === 'fallback' ? 'The AI was not available, so this is a plain draft. Edit it if you like.' : ''));
+  }
+  if (plan.editable && plan.editable.body !== undefined) {
+    fields.push(field('Description', Object.assign(document.createElement('textarea'), { name: 'body', value: plan.editable.body })));
+  }
+  if (plan.editable && plan.editable.notes !== undefined) {
+    fields.push(field('Release notes', Object.assign(document.createElement('textarea'), { name: 'notes', value: plan.editable.notes }),
+      plan.notesFrom === 'github' ? 'Drafted by GitHub from the merged pull requests. Edit them if you like.' : 'Drafted from the commit list. Edit them if you like.'));
+  }
+  $('confirm-fields').replaceChildren(...fields);
+
+  const files = plan.files || [];
+  $('confirm-files-box').hidden = !files.length;
+  $('confirm-files-summary').textContent = `${files.length} file${files.length === 1 ? '' : 's'} in this change`;
+  $('confirm-files').replaceChildren(...files.map((f) => Object.assign(document.createElement('li'), { textContent: `${f.path} (${f.status})` })));
+
+  $('confirm-commands').textContent = plan.commands.join('\n');
+  $('confirm-sends').textContent = plan.local
+    ? 'This stays on your machine. Nothing is sent anywhere.'
+    : `Sends ${plan.sends}. Nothing is sent until you choose the button below.`;
+  $('confirm-go').textContent = CONFIRM_LABELS[action] || 'Go ahead';
+  $('confirm-go').disabled = false;
+  if (!$('confirm-dialog').open) $('confirm-dialog').showModal();
+}
+
+async function prepareStep(action, input) {
+  const text = action === 'pr' ? 'Drafting the pull request…' : action === 'release' ? 'Drafting the release…' : 'Checking…';
+  await working(text, async () => showPlan(await api('POST', '/api/change/prepare', { action, input })));
+}
+
+async function changeAction(id) {
+  if (!id) return;
+  if (id === 'start') {
+    $('start-intro').textContent = `Makes a new branch from the newest ${change.defaultBranch}. `
+      + (change.filesChanged ? `Your ${change.filesChanged} changed file${change.filesChanged === 1 ? '' : 's'} come along.` : 'Then ask the AI for what you want changed.');
+    $('start-form').reset();
+    return $('start-dialog').showModal();
+  }
+  if (id === 'tests') return runTestsNow();
+  if (id === 'override') return prepareStep(change.pr ? 'update-pr' : 'pr', { override: true });
+  if (['first-commit', 'pr', 'update-pr', 'merge', 'release', 'discard'].includes(id)) return prepareStep(id);
+  if (id === 'ask-ai' || id === 'ask-ai-ci') {
+    return working('Asking the AI…', () => api('POST', '/api/change/ask-ai', { kind: id === 'ask-ai-ci' ? 'ci' : 'tests' }));
+  }
+  if (id === 'staging' || id === 'production') return working('Checking…', async () => setChange(await api('POST', '/api/change/health', { which: id })));
+  if (id === 'staging-stop' || id === 'production-stop') {
+    return working('Stopping…', async () => setChange(await api('POST', '/api/change/health', { which: id.replace('-stop', ''), stop: true })));
+  }
+  if (id === 'finish') return working('Finishing…', async () => setChange(await api('POST', '/api/change/finish')));
+}
+
+$('next-btn').addEventListener('click', () => changeAction($('next-btn').dataset.action));
+
+$('start-cancel').addEventListener('click', () => $('start-dialog').close());
+$('start-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const description = e.target.elements.description.value;
+  $('start-dialog').close();
+  await working('Starting…', async () => setChange(await api('POST', '/api/change/start', { description })));
+});
+
+$('tests-close').addEventListener('click', () => $('tests-dialog').close());
+$('tests-ask').addEventListener('click', () => { $('tests-dialog').close(); changeAction('ask-ai'); });
+
+$('confirm-cancel').addEventListener('click', () => { pending = null; $('confirm-dialog').close(); });
+$('confirm-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!pending) return;
+  const { token, action } = pending;
+  const edits = Object.fromEntries(new FormData(e.target));
+  pending = null;
+  $('confirm-go').disabled = true;
+  $('confirm-go').textContent = 'Working…';
+  try {
+    setChange(await api('POST', '/api/change/confirm', { token, action, edits }));
+    $('confirm-dialog').close();
+  } catch (err) {
+    // The plan was used up or refused: show why, and let them start the step again.
+    $('confirm-error').textContent = err.message;
+    $('confirm-error').hidden = false;
+    $('confirm-go').textContent = 'Not done. Close and try the step again';
+  }
+  refreshChanges(0);
+  loadChange();
+});
+
 $('settings-btn').addEventListener('click', showSettings);
 $('settings-cancel').addEventListener('click', () => $('settings').close());
 $('settings-form').addEventListener('submit', async (e) => {
@@ -557,6 +855,16 @@ const events = new EventSource('/api/events');
 events.addEventListener('state', (e) => setState(JSON.parse(e.data)));
 events.addEventListener('log', (e) => appendLog(JSON.parse(e.data)));
 events.addEventListener('chat', (e) => applyChat(JSON.parse(e.data)));
+events.addEventListener('change', (e) => {
+  const update = JSON.parse(e.data);
+  if (update.testChunk !== undefined) {
+    const out = $('tests-output');
+    out.append(update.testChunk);
+    out.scrollTop = out.scrollHeight;
+  } else {
+    setChange(update);
+  }
+});
 events.addEventListener('changed', () => {
   refreshChanges();
   // Pages normally reload themselves. If the site's policy blocked the reload
@@ -571,3 +879,4 @@ api('GET', '/api/state').then((s) => {
 }, (err) => showProblem(err.message));
 
 renderChanges([]);
+renderChange();

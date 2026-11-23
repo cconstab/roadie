@@ -473,3 +473,25 @@ test('a merge done on GitHub instead of in Roadie is picked up', async (t) => {
   assert.equal(v.stage, 'staging');
   assert.equal(v.merge.sha, remote.sha('main'));
 });
+
+test('a test run the AI asked for counts, but only for the files as they were then', async (t) => {
+  const { flow, edit, dir, config } = setup(t);
+  await flow.start({ description: 'AI ran it' });
+  edit('index.html', '<h1>ai</h1>\n');
+  // What the AI's run_tests tool does: the same runner, then tell the change bar.
+  await flow.recordTests(await runTests({ dir, command: 'sh check.sh' }));
+  let v = await flow.view();
+  assert.equal(v.next.id, 'pr');
+  assert.equal(config.getChange('acme/site').tests.by, 'ai');
+  assert.match(v.testOutput, /all tests passed/);
+
+  edit('index.html', '<h1>ai, then edited</h1>\n');
+  v = await flow.view();
+  assert.equal(v.next.id, 'tests');
+
+  edit('BROKEN', 'x\n');
+  await flow.recordTests(await runTests({ dir, command: 'sh check.sh' }));
+  v = await flow.view();
+  assert.equal(v.steps.find((s) => s.id === 'tests').status, 'failed');
+  await assert.rejects(flow.prepare('pr'), /tests are failing/);
+});

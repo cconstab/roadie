@@ -82,6 +82,8 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
       return bad(stderr);
     }
     const [group, verb] = args;
+    if (group === '--version') return ok('gh version 2.0.0 (stand-in)\n');
+    if (group === 'auth' && verb === 'status') return ok('github.com\n  ✓ Logged in to github.com account demo (stand-in)\n');
     const repo = flag(args, '-R') || args[2];
     if (group !== 'api' && repo !== slug) return bad(`GraphQL: Could not resolve to a Repository with the name '${repo}'.`);
 
