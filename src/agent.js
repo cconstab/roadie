@@ -231,7 +231,7 @@ export function parseDraft(text) {
 
 // Ask the AI for a pull request title and description. It gets the diff as
 // text and no tools at all. Returns null if the AI is unavailable or unhelpful.
-export async function draftPullRequest({ sdk, ai, site, description, changes, timeoutMs = 120_000 }) {
+export async function draftPullRequest({ sdk, ai, site, description, changes, timeoutMs = 45_000 }) {
   if (!aiStatus(ai).ready) return null;
   const diff = changes.map((c) => `### ${c.status}: ${c.path}\n${isSecretPath(c.path) ? '(contents not shown)' : (c.diff || '').slice(0, 6000)}`).join('\n\n').slice(0, 40_000);
   const prompt = `Write the title and description for a pull request to the website repository ${site.key}.

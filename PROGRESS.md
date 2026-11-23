@@ -76,6 +76,8 @@ A fresh reviewer read the safety-critical code looking for ways to break the rul
 | The preview proxy answered to any host name | It answers only as this machine |
 | A site that rewrites its own files on start restarted for ever | Automatic restarts stop after four in quick succession, with a message |
 
+**The sandbox has not had an adversarial test by a second party.** A follow-up review that was asked to try to break out of the sandbox was stopped by the AI model's own safety filters, so that probing did not happen. The limits were checked one by one (see `test/sandbox.test.js`), but nobody other than the author has tried to defeat them. Worth having a security-minded person do so.
+
 **What is still not defended against:**
 
 - **Linux has no sandbox.** Everything in the table that depends on the sandbox holds on macOS only. Roadie warns about this in the window and the README says so. A Linux sandbox (bubblewrap) is the most important piece of future work.
