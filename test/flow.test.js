@@ -436,7 +436,7 @@ test('abandoning a change keeps the edits in the stash and goes back to main', a
   assert.ok(!fs.existsSync(path.join(dir, 'new.txt')));
   assert.match(execFileSync('git', ['stash', 'list'], { cwd: dir }).toString(), /roadie: change\/never-mind/);
   execFileSync('git', ['stash', 'pop'], { cwd: dir });
-  assert.equal(fs.readFileSync(path.join(dir, 'new.txt'), 'utf8'), 'draft\n', 'the edits can be brought back');
+  assert.equal(fs.readFileSync(path.join(dir, 'new.txt'), 'utf8').replace(/\r\n/g, '\n'), 'draft\n', 'the edits can be brought back');
   assert.deepEqual(remote.branches(), ['main']);
 });
 
