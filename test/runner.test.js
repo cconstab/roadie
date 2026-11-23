@@ -1,0 +1,141 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+import { Runner, freePort, listeningHost } from '../src/runner.js';
+import { needsRestart } from '../src/watcher.js';
+import { tmpDir, writeFiles } from './helpers.js';
+
+const SERVER = `
+const http = require('node:http');
+const port = Number(process.env.FIXED_PORT || process.env.PORT);
+http.createServer((req, res) => res.end(JSON.stringify({
+  host: process.env.HOST, key: process.env.ANTHROPIC_API_KEY || null,
+}))).listen(port, '127.0.0.1', () => console.log('up on ' + port));
+`;
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+async function waitGone(pid) {
+  for (let i = 0; i < 50 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
+  return !alive(pid);
+}
+
+test('the start command runs on a free port and is stopped as a whole', async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'server.js': SERVER });
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const logs = [];
+  runner.on('log', (e) => logs.push(e.line));
+
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+
+  const status = await runner.start({ dir, command: 'node server.js', portHint: 8080 });
+  assert.equal(status.state, 'running');
+  assert.equal(status.mode, 'command');
+  assert.equal(status.host, '127.0.0.1');
+  assert.notEqual(status.port, 8080);
+
+  const seen = await (await fetch(`http://127.0.0.1:${status.port}/`)).json();
+  assert.equal(seen.host, '127.0.0.1', 'the site is told to listen on this machine only');
+  assert.equal(seen.key, null, "the site must not inherit Roadie's AI key");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(logs.some((l) => l.includes('up on')));
+
+  const pid = runner.child.pid;
+  await runner.stop();
+  assert.equal(runner.status.state, 'stopped');
+  assert.ok(await waitGone(pid), 'the child process is gone');
+  assert.equal(await listeningHost(status.port), null);
+});
+
+test('a restart reuses the same port', async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'server.js': SERVER });
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const first = await runner.start({ dir, command: 'node server.js' });
+  const second = await runner.start({ dir, command: 'node server.js' });
+  assert.equal(second.state, 'running');
+  assert.equal(second.port, first.port);
+});
+
+test('a site that ignores PORT is found on its usual port', async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'server.js': SERVER });
+  const fixed = await freePort();
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const status = await runner.start({ dir, command: `FIXED_PORT=${fixed} node server.js`, portHint: fixed });
+  assert.equal(status.state, 'running');
+  assert.equal(status.port, fixed);
+});
+
+test('a start command that exits is reported as failed', async (t) => {
+  const dir = tmpDir(t);
+  const runner = new Runner();
+  const status = await runner.start({ dir, command: 'node -e "process.exit(3)"' });
+  assert.equal(status.state, 'failed');
+  assert.match(status.error, /exit 3/);
+});
+
+test('a site that never listens times out and is stopped', async (t) => {
+  const dir = tmpDir(t);
+  const runner = new Runner({ startTimeoutMs: 600 });
+  const status = await runner.start({ dir, command: 'node -e "setInterval(()=>{},1000)"' });
+  assert.equal(status.state, 'failed');
+  assert.match(status.error, /nothing answered/);
+  assert.equal(runner.child, null);
+});
+
+test('the install command runs first when node_modules is missing', async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'server.js': SERVER });
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const status = await runner.start({ dir, command: 'node server.js', install: 'mkdir node_modules && echo installed > node_modules/marker' });
+  assert.equal(status.state, 'running');
+  assert.ok(fs.existsSync(path.join(dir, 'node_modules', 'marker')));
+
+  const failing = await new Runner().start({ dir: tmpDir(t), command: 'node server.js', install: 'exit 2' });
+  assert.equal(failing.state, 'failed');
+  assert.match(failing.error, /install command failed/);
+});
+
+test('with no start command the folder is served as static files', async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, {
+    'index.html': '<h1>home</h1>', 'about.html': '<h1>about</h1>', 'css/site.css': 'a{}',
+    '.env': 'SECRET=1', '.git/config': '[core]',
+  });
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const status = await runner.start({ dir, command: '' });
+  assert.equal(status.state, 'running');
+  assert.equal(status.mode, 'static');
+  const base = `http://127.0.0.1:${status.port}`;
+
+  const home = await fetch(base + '/');
+  assert.equal(await home.text(), '<h1>home</h1>');
+  assert.match(home.headers.get('content-type'), /text\/html/);
+  assert.equal(await (await fetch(base + '/about')).text(), '<h1>about</h1>');
+  assert.match((await fetch(base + '/css/site.css')).headers.get('content-type'), /text\/css/);
+
+  for (const hidden of ['/.env', '/.git/config', '/missing.html', '/%2e%2e/%2e%2e/etc/passwd']) {
+    assert.equal((await fetch(base + hidden)).status, 404, hidden);
+  }
+  assert.equal((await fetch(base + '/', { method: 'POST' })).status, 405);
+
+  await runner.stop();
+  assert.equal(await listeningHost(status.port), null);
+});
+
+test('only non-static changes restart the site', () => {
+  assert.equal(needsRestart(['css/styles.css', 'index.html', 'img/logo.png']), false);
+  assert.equal(needsRestart(['index.html', 'server.js']), true);
+  assert.equal(needsRestart(['package.json']), true);
+});

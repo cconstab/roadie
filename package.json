@@ -1,0 +1,16 @@
+{
+  "name": "roadie",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Edit a hand-coded website by chatting with an AI, preview it live, and walk the change through GitHub to staging and production.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT"
+}

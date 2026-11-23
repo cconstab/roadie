@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="roadie-token" content="__ROADIE_TOKEN__">
+  <title>Roadie</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Roadie</h1>
+    <form id="open-form" class="open">
+      <label for="repo" class="sr">GitHub repository</label>
+      <input id="repo" name="repo" placeholder="owner/repo" autocomplete="off" spellcheck="false" required>
+      <button type="submit" id="open-btn">Open site</button>
+    </form>
+    <div id="site-info" class="site-info"></div>
+    <button type="button" id="settings-btn" hidden>Site settings</button>
+  </header>
+
+  <div id="problems" class="problems" hidden></div>
+
+  <nav class="change-bar" aria-label="Change progress">
+    <ol id="steps">
+      <li>Start change</li><li>Run tests</li><li>Open PR</li><li>CI</li>
+      <li>Merge</li><li>Staging</li><li>Release</li><li>Production</li>
+    </ol>
+    <span class="hint">The change bar arrives in milestone 3.</span>
+  </nav>
+
+  <main class="panes">
+    <section class="pane" aria-labelledby="chat-h">
+      <h2 id="chat-h">Chat</h2>
+      <p class="empty">Chat with the AI arrives in milestone 2.</p>
+    </section>
+
+    <section class="pane preview" aria-labelledby="preview-h">
+      <div class="pane-head">
+        <h2 id="preview-h">Preview</h2>
+        <span id="preview-status" class="pill">no site</span>
+        <span id="preview-path" class="path"></span>
+        <span class="spacer"></span>
+        <button type="button" id="run-btn" disabled>Run</button>
+        <button type="button" id="stop-btn" disabled>Stop</button>
+        <button type="button" id="reload-btn" disabled>Reload</button>
+        <a id="newtab" class="button disabled" target="_blank" rel="noopener">Open in new tab</a>
+        <button type="button" id="log-btn" aria-expanded="false">Log</button>
+      </div>
+      <div class="preview-body">
+        <iframe id="frame" title="Site preview" hidden
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>
+        <p id="preview-empty" class="empty">Enter a GitHub owner/repo above and choose Open site.</p>
+      </div>
+      <pre id="log" class="log" hidden></pre>
+    </section>
+
+    <section class="pane" aria-labelledby="files-h">
+      <h2 id="files-h">Changed files</h2>
+      <p class="empty">Diffs arrive in milestone 2.</p>
+    </section>
+  </main>
+
+  <dialog id="settings">
+    <form id="settings-form" method="dialog">
+      <h2>Site settings</h2>
+      <p id="settings-intro" class="muted"></p>
+      <div class="fields">
+        <label>Start command <input name="start" spellcheck="false" placeholder="leave empty to serve the folder as static files"><small data-note="start"></small></label>
+        <label>Test command <input name="test" spellcheck="false"><small data-note="test"></small></label>
+        <label>Install command <input name="install" spellcheck="false"><small data-note="install"></small></label>
+        <label>Site's usual port <input name="port" inputmode="numeric" pattern="[0-9]*"><small data-note="port"></small></label>
+        <label>Staging URL <input name="stagingUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="stagingUrl"></small></label>
+        <label>Production URL <input name="productionUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="productionUrl"></small></label>
+        <label>Health-check path <input name="healthPath" spellcheck="false" placeholder="optional, e.g. /api/health"><small data-note="healthPath"></small></label>
+      </div>
+      <p class="muted">Saved in Roadie's own config, never in the site's repo.</p>
+      <div class="actions">
+        <button type="button" id="settings-cancel">Cancel</button>
+        <button type="submit" id="settings-save" class="primary">Save and run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>
