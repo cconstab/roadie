@@ -205,6 +205,83 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
   return options;
 }
 
+// Pull the title and body out of whatever the model replied with.
+export function parseDraft(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const clean = (title) => String(title || '').replace(/\s+/g, ' ').replace(/^["'`#\s]+|["'`\s]+$/g, '').replace(/\.$/, '').slice(0, 120);
+  const json = raw.match(/\{[\s\S]*\}/);
+  if (json) {
+    try {
+      const data = JSON.parse(json[0]);
+      if (data && typeof data.title === 'string' && clean(data.title)) {
+        return { title: clean(data.title), body: typeof data.body === 'string' ? data.body.trim() : '' };
+      }
+    } catch { /* fall through to plain text */ }
+  }
+  const lines = raw.replace(/^```[a-z]*\n?|```$/g, '').split('\n');
+  const title = clean(lines.shift().replace(/^title:\s*/i, ''));
+  return title ? { title, body: lines.join('\n').trim() } : null;
+}
+
+// Ask the AI for a pull request title and description. It gets the diff as
+// text and no tools at all. Returns null if the AI is unavailable or unhelpful.
+export async function draftPullRequest({ sdk, ai, site, description, changes, timeoutMs = 120_000 }) {
+  if (!aiStatus(ai).ready) return null;
+  const diff = changes.map((c) => `### ${c.status}: ${c.path}\n${isSecretPath(c.path) ? '(contents not shown)' : (c.diff || '').slice(0, 6000)}`).join('\n\n').slice(0, 40_000);
+  const prompt = `Write the title and description for a pull request to the website repository ${site.key}.
+
+What the owner said this change is for: ${description || '(nothing given)'}
+
+Rules:
+- Title: one plain sentence, under 70 characters, no full stop, saying what the change does.
+- Body: a short summary of what changed and why, in plain words, as a few bullet points. Mention tests that were added or changed. No headings, no praise.
+- Describe only what is in the diff. Do not invent anything.
+
+Reply with only a JSON object: {"title": "...", "body": "..."}
+
+The diff:
+
+${diff}`;
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
+  let reply = '';
+  try {
+    const q = sdk.query({
+      prompt,
+      options: {
+        cwd: site.dir,
+        env: agentEnv(ai),
+        model: ai.provider === 'ollama' ? ai.ollamaModel : (ai.model || undefined),
+        tools: [],                 // writing only: no tools of any kind
+        allowedTools: [],
+        permissionMode: 'dontAsk',
+        mcpServers: {},
+        strictMcpConfig: true,
+        settingSources: [],
+        skills: [],
+        plugins: [],
+        persistSession: false,
+        maxTurns: 1,
+        abortController,
+        systemPrompt: 'You write short, accurate pull request descriptions for a website. You reply with JSON only.',
+      },
+    });
+    for await (const m of q) {
+      if (m.type === 'assistant' && !m.parent_tool_use_id) {
+        for (const block of m.message?.content || []) if (block.type === 'text') reply += block.text;
+      } else if (m.type === 'result' && m.subtype === 'success' && m.result) {
+        reply = m.result;
+      }
+    }
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+  return parseDraft(reply);
+}
+
 const ERROR_TEXT = {
   authentication_failed: 'The AI service rejected the sign-in. Check the API key Roadie was started with.',
   billing_error: 'The AI service reported a billing problem with this account.',

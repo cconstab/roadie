@@ -7,7 +7,8 @@ export function roadieHome() {
   return process.env.ROADIE_HOME || path.join(os.homedir(), 'roadie');
 }
 
-export const SETTING_KEYS = ['start', 'test', 'install', 'port', 'stagingUrl', 'productionUrl', 'healthPath'];
+export const SETTING_KEYS = ['start', 'test', 'install', 'port', 'stagingUrl', 'productionUrl', 'healthPath', 'mergeMethod'];
+export const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 
 // Keep only known keys, as trimmed strings (port as a number or null).
 export function cleanSettings(input = {}) {
@@ -16,6 +17,8 @@ export function cleanSettings(input = {}) {
     if (key === 'port') {
       const n = Number(input.port);
       out.port = Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
+    } else if (key === 'mergeMethod') {
+      out.mergeMethod = MERGE_METHODS.includes(input.mergeMethod) ? input.mergeMethod : 'squash';
     } else {
       out[key] = typeof input[key] === 'string' ? input[key].trim() : '';
     }
@@ -86,6 +89,17 @@ export function createConfig(home = roadieHome()) {
     },
     lastSite() {
       return load().lastSite || null;
+    },
+    // The change in progress for a site (branch, test result, pull request...), or null.
+    getChange(key) {
+      return (load().changes || {})[key] || null;
+    },
+    saveChange(key, record) {
+      const data = load();
+      data.changes = data.changes || {};
+      if (record) data.changes[key] = record; else delete data.changes[key];
+      save(data);
+      return record;
     },
     // Which hosting-guide steps the person has ticked off for a site.
     getGuideDone(key) {

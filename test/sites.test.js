@@ -121,7 +121,7 @@ test('site settings are saved in Roadie\'s home, cleaned, and never in the site'
   });
   assert.deepEqual(saved, {
     start: 'npm start', test: 'npm test', install: '', port: 8080,
-    stagingUrl: 'https://staging.example.com', productionUrl: '', healthPath: '/api/health',
+    stagingUrl: 'https://staging.example.com', productionUrl: '', healthPath: '/api/health', mergeMethod: 'squash',
   });
   assert.deepEqual(config.getSite('acme/site'), saved);
   assert.equal(config.getSite('acme/other'), null);

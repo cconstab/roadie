@@ -1,10 +1,13 @@
 // The only module that runs git or gh. Tests pass a fake `run`.
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { run as realRun } from './exec.js';
 
 export function createGitOps({ run = realRun } = {}) {
   // Never let git or gh stop to ask a question in a terminal nobody is watching.
   const env = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1' });
+  const baseEnv = env;
   // Hooks in a site's clone are never run: Roadie's git commands must do exactly
   // what the interface says and nothing more.
   const git = (cwd, args, opts = {}) => run('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, env: env(), ...opts });
@@ -123,30 +126,243 @@ export function createGitOps({ run = realRun } = {}) {
       return [...new Set(r.stdout.split('\0').filter(Boolean))].sort();
     },
 
-    // What differs from the last commit: [{ path, status, diff }].
-    async changes(dir) {
-      const st = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
-      if (st.code !== 0) throw new Error(`git status failed: ${st.stderr.trim()}`);
-      const fields = st.stdout.split('\0');
+    // What differs from a commit (by default the last one), counting files not
+    // yet committed: [{ path, from, status, diff }]. During a change the base is
+    // where the branch left main, so the whole change shows, committed or not.
+    async changes(dir, base = 'HEAD') {
       const out = [];
-      for (let i = 0; i < fields.length; i++) {
-        const field = fields[i];
-        if (field.length < 4) continue;
-        const xy = field.slice(0, 2);
-        const file = field.slice(3);
-        let from = null;
-        if (xy.includes('R') || xy.includes('C')) from = fields[++i]; // the old name follows
-        const status = xy === '??' ? 'added'
-          : xy.includes('D') ? 'deleted'
-          : xy.includes('R') ? 'renamed'
-          : xy.includes('A') ? 'added'
-          : 'modified';
-        const d = xy === '??'
-          ? await git(dir, ['diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', file])
-          : await git(dir, ['diff', '--no-color', '--no-ext-diff', 'HEAD', '--', ...(from ? [from, file] : [file])]);
-        out.push({ path: file, from, status, diff: d.stdout });
+      const seen = new Set();
+      if (await this.hasCommits(dir)) {
+        const names = await git(dir, ['diff', '--name-status', '-z', '-M', base, '--']);
+        if (names.code !== 0) throw new Error(`git diff failed: ${names.stderr.trim()}`);
+        const fields = names.stdout.split('\0').filter((f) => f !== '');
+        for (let i = 0; i < fields.length; i++) {
+          const code = fields[i][0];
+          let from = null;
+          let file = fields[++i];
+          if (code === 'R' || code === 'C') { from = file; file = fields[++i]; }
+          const status = code === 'A' ? 'added' : code === 'D' ? 'deleted' : code === 'R' ? 'renamed' : 'modified';
+          const d = await git(dir, ['diff', '--no-color', '--no-ext-diff', '-M', base, '--', ...(from ? [from, file] : [file])]);
+          out.push({ path: file, from, status, diff: d.stdout });
+          seen.add(file);
+        }
+      }
+      const untracked = await git(dir, ['ls-files', '-z', '--others', '--exclude-standard']);
+      for (const file of untracked.stdout.split('\0').filter(Boolean)) {
+        if (seen.has(file)) continue;
+        const d = await git(dir, ['diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', file]);
+        out.push({ path: file, from: null, status: 'added', diff: d.stdout });
+      }
+      return out.sort((a, b) => a.path.localeCompare(b.path));
+    },
+
+    // --- facts the change bar needs -----------------------------------------
+
+    async headSha(dir) {
+      const r = await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+      return r.code === 0 ? r.stdout.trim() : null;
+    },
+
+    async remoteSha(dir, branch) {
+      const r = await git(dir, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`]);
+      return r.code === 0 ? r.stdout.trim() : null;
+    },
+
+    async mergeBase(dir, branch) {
+      const r = await git(dir, ['merge-base', 'HEAD', `origin/${branch}`]);
+      return r.code === 0 ? r.stdout.trim() : null;
+    },
+
+    // An id for exactly what is in the working tree now, committed or not.
+    // Uses a throwaway index, so the real index and files are untouched.
+    async treeId(dir) {
+      const index = path.join(os.tmpdir(), `roadie-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const env = { ...baseEnv(), GIT_INDEX_FILE: index };
+      try {
+        const add = await run('git', ['-c', 'core.hooksPath=/dev/null', 'add', '-A', '--', '.'], { cwd: dir, env });
+        if (add.code !== 0) throw new Error(`Reading the working tree failed: ${add.stderr.trim()}`);
+        const tree = await run('git', ['write-tree'], { cwd: dir, env });
+        if (tree.code !== 0) throw new Error(`Reading the working tree failed: ${tree.stderr.trim()}`);
+        return tree.stdout.trim();
+      } finally {
+        fs.rmSync(index, { force: true });
+      }
+    },
+
+    // Does GitHub have any commits for this repo at all?
+    async remoteIsEmpty(dir) {
+      const r = await git(dir, [...VIA_GH, 'ls-remote', '--heads', 'origin'], { timeout: 60_000 });
+      if (r.code !== 0) throw new Error(`Could not reach GitHub: ${r.stderr.trim()}`);
+      return r.stdout.trim() === '';
+    },
+
+    async tags(dir) {
+      const r = await git(dir, ['tag', '--list']);
+      return r.stdout.split('\n').map((t) => t.trim()).filter(Boolean);
+    },
+
+    async log(dir, range) {
+      const r = await git(dir, ['log', '--format=%h %s', range]);
+      return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+    },
+
+    // --- local steps of a change ----------------------------------------------
+
+    // New branch from the newest main. Uncommitted edits come along.
+    async startBranch(dir, name, defaultBranch) {
+      await this.fetch(dir);
+      return must(git(dir, ['switch', '--no-track', '-c', name, `origin/${defaultBranch}`]),
+        `Starting the branch ${name}`);
+    },
+
+    async branchExists(dir, name) {
+      return (await git(dir, ['rev-parse', '--verify', '--quiet', `refs/heads/${name}`])).code === 0;
+    },
+
+    switchTo(dir, branch) {
+      return must(git(dir, ['switch', branch]), `Switching to ${branch}`);
+    },
+
+    async stagedFiles(dir) {
+      const r = await git(dir, ['diff', '--cached', '--name-only', '-z']);
+      return r.stdout.split('\0').filter(Boolean);
+    },
+
+    // Lines a commit would add, for the secret scan: [{ path, line }].
+    async stagedAdditions(dir) {
+      const r = await git(dir, ['diff', '--cached', '--no-color', '--no-ext-diff', '-U0']);
+      const out = [];
+      let file = null;
+      for (const line of r.stdout.split('\n')) {
+        if (line.startsWith('+++ ')) file = line.slice(4).replace(/^b\//, '');
+        else if (line.startsWith('+') && !line.startsWith('+++') && file && file !== '/dev/null') out.push({ path: file, line: line.slice(1) });
       }
       return out;
+    },
+
+    stageAll(dir) {
+      return must(git(dir, ['add', '-A', '--', '.']), 'Staging the changes');
+    },
+
+    unstageAll(dir) {
+      return git(dir, ['reset', '-q']);
+    },
+
+    // Commits what is staged. Refuses on the default branch unless this is the
+    // one-time first commit of an empty repo.
+    async commit(dir, message, { defaultBranch, firstCommit = false } = {}) {
+      const branch = await this.currentBranch(dir);
+      if (branch === defaultBranch && !firstCommit) {
+        throw new Error(`Roadie never commits to ${defaultBranch} directly. Start a change first.`);
+      }
+      if (firstCommit && (await this.hasCommits(dir))) {
+        throw new Error('A first commit is only possible in a repo with no commits.');
+      }
+      await must(git(dir, ['commit', '-m', message]), 'Committing');
+      return this.headSha(dir);
+    },
+
+    // Pushes one branch. Never forces, and refuses the default branch unless
+    // this is the first commit of an empty repo.
+    async push(dir, branch, { defaultBranch, firstCommit = false } = {}) {
+      if (!branch || branch.startsWith('-')) throw new Error('No branch to push.');
+      if (branch === defaultBranch) {
+        if (!firstCommit) throw new Error(`Roadie never pushes to ${defaultBranch} directly.`);
+        if (!(await this.remoteIsEmpty(dir))) throw new Error(`GitHub already has commits, so Roadie will not push to ${defaultBranch}.`);
+      }
+      return must(
+        git(dir, [...VIA_GH, 'push', '--set-upstream', 'origin', `refs/heads/${branch}:refs/heads/${branch}`], { timeout: 300_000 }),
+        `Pushing ${branch}`,
+      );
+    },
+
+    // After a merge: back to the default branch, brought up to date.
+    async returnToDefault(dir, defaultBranch) {
+      await this.fetch(dir);
+      await must(git(dir, ['switch', defaultBranch]), `Switching to ${defaultBranch}`);
+      await must(git(dir, ['merge', '--ff-only', `origin/${defaultBranch}`]), `Updating ${defaultBranch}`);
+    },
+
+    async deleteLocalBranch(dir, branch, defaultBranch) {
+      if (branch === defaultBranch) return;
+      await git(dir, ['branch', '-D', branch]);
+    },
+
+    // Set aside everything uncommitted, recoverably (git stash).
+    async stashAll(dir, label) {
+      const r = await git(dir, ['stash', 'push', '--include-untracked', '-m', label]);
+      if (r.code !== 0) throw new Error(`Setting the changes aside failed: ${r.stderr.trim()}`);
+      return !/No local changes/i.test(r.stdout);
+    },
+
+    // --- GitHub, through gh. Every call names the repo, so it cannot act on another. ---
+
+    async repoInfo(slug) {
+      const out = await must(gh(undefined, ['repo', 'view', slug, '--json',
+        'nameWithOwner,defaultBranchRef,viewerPermission,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,isEmpty,visibility']),
+        `Reading ${slug} on GitHub`);
+      return JSON.parse(out);
+    },
+
+    async prForBranch(slug, branch) {
+      const out = await must(gh(undefined, ['pr', 'list', '-R', slug, '--head', branch, '--state', 'all', '--limit', '1', '--json', 'number,url,state']),
+        'Looking for a pull request');
+      return JSON.parse(out)[0] || null;
+    },
+
+    async prCreate(slug, { title, body, base, head }) {
+      const out = await must(gh(undefined, ['pr', 'create', '-R', slug, '--base', base, '--head', head, '--title', title, '--body', body]),
+        'Opening the pull request');
+      const url = (out.match(/https:\/\/\S+\/pull\/(\d+)/) || [])[0];
+      if (!url) throw new Error(`gh did not report the pull request's address: ${out}`);
+      return { url, number: Number(url.split('/').pop()) };
+    },
+
+    async prView(slug, number) {
+      const out = await must(gh(undefined, ['pr', 'view', String(number), '-R', slug, '--json',
+        'number,url,state,title,isDraft,mergeable,mergeStateStatus,headRefName,headRefOid,baseRefName,mergeCommit,mergedAt']),
+        'Reading the pull request');
+      return JSON.parse(out);
+    },
+
+    // [] when the repo has no checks at all.
+    async prChecks(slug, number) {
+      const r = await gh(undefined, ['pr', 'checks', String(number), '-R', slug, '--json', 'name,state,bucket,link,workflow']);
+      const text = r.stdout.trim();
+      if (text.startsWith('[')) return JSON.parse(text); // gh exits non-zero while checks are pending or failing
+      if (/no checks reported/i.test(r.stderr + r.stdout)) return [];
+      throw new Error(`Reading the checks failed: ${(r.stderr || r.stdout).trim()}`);
+    },
+
+    // Merges only if the pull request still points at the commit that was reviewed.
+    async prMerge(slug, number, { method = 'squash', sha, deleteBranch = true }) {
+      const flag = { squash: '--squash', merge: '--merge', rebase: '--rebase' }[method];
+      if (!flag) throw new Error(`Unknown merge method: ${method}`);
+      const args = ['pr', 'merge', String(number), '-R', slug, flag, '--match-head-commit', sha];
+      if (deleteBranch) args.push('--delete-branch');
+      return must(gh(undefined, args, { timeout: 120_000 }), 'Merging the pull request');
+    },
+
+    async releases(slug) {
+      const out = await must(gh(undefined, ['release', 'list', '-R', slug, '--limit', '30', '--json', 'tagName,isLatest,isPrerelease,isDraft,publishedAt']),
+        'Reading the releases');
+      return JSON.parse(out);
+    },
+
+    // Asks GitHub to draft release notes. Nothing is created.
+    async releaseNotes(slug, { tag, target, previousTag }) {
+      const args = ['api', '-X', 'POST', `repos/${slug}/releases/generate-notes`, '-f', `tag_name=${tag}`, '-f', `target_commitish=${target}`];
+      if (previousTag) args.push('-f', `previous_tag_name=${previousTag}`);
+      const out = await must(gh(undefined, args), 'Drafting the release notes');
+      const data = JSON.parse(out);
+      return { name: data.name || tag, body: data.body || '' };
+    },
+
+    async releaseCreate(slug, { tag, target, title, notes }) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(tag)) throw new Error(`"${tag}" is not a usable version tag.`);
+      const out = await must(gh(undefined, ['release', 'create', tag, '-R', slug, '--target', target, '--title', title, '--notes', notes]),
+        'Publishing the release');
+      return { tag, url: (out.match(/https:\/\/\S+/) || [''])[0] };
     },
 
     // Which of these paths does the repo's .gitignore cover?

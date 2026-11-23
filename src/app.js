@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { aiStatus, createChat } from './agent.js';
+import { aiStatus, createChat, draftPullRequest } from './agent.js';
 import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
+import { createFlow } from './flow.js';
 import { isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
 import { createPreviewProxy } from './proxy.js';
@@ -31,7 +32,7 @@ async function loadSdk() {
   return { sdk, z };
 }
 
-export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
+export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {} }) {
   const token = crypto.randomBytes(24).toString('base64url'); // per run; proves a request came from Roadie's own page
   const runner = new Runner();
   const proxy = createPreviewProxy({
@@ -75,6 +76,18 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
   }
   const pushState = () => send('state', snapshot());
 
+  // The change bar: branch, tests, pull request, CI, merge, staging, release, production.
+  const flow = createFlow({
+    gitops, config, runTests,
+    getSite: () => site,
+    emit: (update) => send('change', update),
+    draftPr: async (input) => {
+      const { sdk } = await agentSdk();
+      return draftPullRequest({ sdk, ai, ...input });
+    },
+    ...flowOptions,
+  });
+
   runner.on('status', pushState);
   runner.on('log', (entry) => {
     logs.push(entry);
@@ -104,6 +117,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
       gitops,
       onChange(files) {
         send('changed', { files });
+        flow.notify();
         const state = runner.status.state;
         if (runner.status.mode === 'command' && (state === 'running' || state === 'failed') && needsRestart(files)) {
           runner.log(`Changed: ${files.join(', ')}. Restarting the site.`);
@@ -159,6 +173,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
         blank,
       };
       watch();
+      flow.notify();
     } finally {
       busy = null;
       pushState();
@@ -225,12 +240,32 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
 
     'GET /api/changes': async () => {
       if (!site) return { files: [] };
-      const files = (await gitops.changes(site.dir)).map((f) => {
+      const files = (await gitops.changes(site.dir, flow.base())).map((f) => {
         if (isSecretPath(f.path)) return { ...f, diff: '', hidden: 'Not shown: this looks like a secrets file.' };
         if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
         return f;
       });
       return { files };
+    },
+
+    // --- the change bar ---
+    'GET /api/change': async () => flow.view(),
+    'POST /api/change/refresh': async () => flow.refresh(),
+    'POST /api/change/start': async (body) => { const v = await flow.start(body); pushState(); return v; },
+    'POST /api/change/tests': async () => flow.tests(),
+    // An outward step is shown first (prepare) and only then carried out (confirm).
+    'POST /api/change/prepare': async (body) => flow.prepare(String(body.action || ''), body.input || {}),
+    'POST /api/change/confirm': async (body) => {
+      const v = await flow.confirm(String(body.token || ''), String(body.action || ''), body.edits || {});
+      pushState();
+      return v;
+    },
+    'POST /api/change/health': async (body) => { flow.health(body.which, { stop: !!body.stop }); return flow.view(); },
+    'POST /api/change/finish': async () => { const v = await flow.finish(); pushState(); return v; },
+    'POST /api/change/ask-ai': async (body) => {
+      const { text, context } = await flow.aiRequest(body.kind);
+      (await ensureChat()).send(text, { context });
+      return { ok: true };
     },
 
     'POST /api/ai': async (body) => {
@@ -313,7 +348,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
       const body = req.method === 'POST' ? await readJson(req) : {};
       json(200, await handler(body));
     } catch (err) {
-      json(400, { error: err.message });
+      json(400, { error: err.message, ...(err.data || {}) });
     }
   });
 
@@ -339,6 +374,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
     },
     async close() {
       clearInterval(ping);
+      flow.stop();
       endChat();
       watcher?.close();
       await runner.stop();
