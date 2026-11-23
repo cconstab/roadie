@@ -22,12 +22,20 @@ Roadie runs on macOS and Linux (on Windows, use WSL). You need:
 git clone https://github.com/cconstab/roadie.git && cd roadie
 npm install                          # the Claude Agent SDK and zod, nothing else
 export ANTHROPIC_API_KEY=sk-ant-...  # skip this if you will use Ollama
-npm start                            # http://127.0.0.1:4747, opens your browser
+npm start                            # opens your browser
 ```
+
+`npm start` prints a link and opens it. Use that link: it carries a one-time key,
+and Roadie will not show itself to a browser (or anything else on your machine)
+that arrives without it. The link changes each time Roadie starts.
 
 Roadie checks git and gh when it starts and tells you plainly if something is
 missing or not signed in. It listens on `127.0.0.1` only, and stops every process
 it started when you stop it (Ctrl+C).
+
+**Use macOS for now if you can.** On macOS, Roadie runs all of a site's own code
+in a sandbox (see [Rules Roadie enforces](#rules-roadie-enforces)). On Linux
+there is no sandbox yet, and Roadie warns you of that at the top of the window.
 
 `npm test` runs Roadie's own tests.
 
@@ -136,7 +144,9 @@ the AI.
   once, and is refused if any file changed after you saw it.
 - **The AI can never push, merge or release.** It has no shell, no git, no `gh`
   and no network. It can read and edit files in the open site's folder, list and
-  search them, and run the site's test command. Nothing else.
+  search them, and run the site's test command. Nothing else. It cannot touch
+  `.git` however the name is spelled, and links in the repo that lead outside
+  the site are not followed.
 - **Never commit or push to `main` directly.** The one exception is the first
   commit of a repo that is empty on GitHub, described above.
 - **No pull request while tests fail**, unless you override, and the override
@@ -146,12 +156,38 @@ the AI.
   override: remove the secret (or add the file to `.gitignore`) and try again.
 - **Your git and gh sign-in, no stored tokens.** Roadie talks to GitHub over HTTPS
   and signs in through `gh` for each command. It writes nothing to your git config.
-- **`127.0.0.1` only**, and every child process stops when Roadie exits.
+- **`127.0.0.1` only**, and every child process stops when Roadie exits. Roadie
+  and its preview only answer when addressed as this machine, and Roadie only
+  opens for the browser that came with its launch link.
 
-Roadie also never runs git hooks from a site's clone, and on macOS it runs the
-site's tests in a sandbox: they can reach servers on your own machine but nothing
-beyond it, and cannot write to the site's `.git` folder. (Test files are code the
-AI may have edited.) On other systems tests run without that sandbox for now.
+### The sandbox for site code
+
+The AI cannot push or read secrets itself. But it can edit files that Roadie later
+runs: the site's tests, its server, its install scripts. So on macOS Roadie runs
+all three inside a sandbox, where that code:
+
+- **cannot use your sign-ins.** No keychain, no `gh` or git credentials, no SSH
+  keys or agent, no cloud credentials. Nothing in your home folder can be read
+  except the site itself, your language tools and package caches.
+- **cannot reach Roadie.** Roadie's own ports are closed to it, so it cannot press
+  Roadie's buttons for you.
+- **cannot reach the internet**, for tests and the preview: only this machine. If
+  your site needs the internet to run, turn on "Let the running site reach the
+  internet" in Site settings. Install commands do get the internet, to download
+  packages.
+- **cannot write outside the site**, apart from temp folders and package caches,
+  and never to the site's `.git` folder.
+- **cannot read the site's secret files** (such as `.env`) from tests, because test
+  output is shown to the AI. The running preview can read them: a site needs its
+  settings to run.
+
+Roadie also never runs git hooks, or any helper program named in a clone's git
+settings.
+
+**On Linux there is no sandbox yet.** There, a site's tests, server and install
+scripts run with your account's full access, including your GitHub sign-in. Roadie
+says so at the top of the window. Read the AI's changes in the right-hand pane
+before running tests or the preview.
 
 ## Choosing the AI
 
@@ -207,8 +243,14 @@ Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different p
 - **"gh is not signed in"**: run `gh auth login` in a terminal, then restart Roadie.
 - **"No ANTHROPIC_API_KEY was set"**: set it in the shell you start Roadie from, or
   switch to Ollama with the AI button.
+- **"Open Roadie from its own link"**: use the link `npm start` printed, or stop
+  Roadie and start it again.
 - **The preview says the site is not answering**: open **Log** in the preview
   pane. If the site ignores the `PORT` setting, put its usual port in Site settings.
+- **The site works on its own but not in the preview, or its tests fail only in
+  Roadie**: it may need something the sandbox withholds. If it needs the internet
+  to run, turn that on in Site settings. Tests that need the internet, or files
+  elsewhere in your home folder, will not pass inside Roadie.
 - **A push is refused by GitHub**: the message says why. If GitHub found a secret,
   remove it and try again.
 - **Staging never reports the new build**: the merge is done; the deploy is not.
@@ -231,7 +273,8 @@ standard library plus the Agent SDK.
 | `src/change.js` | the change bar's logic, as pure functions |
 | `src/flow.js` | carries a change through each step |
 | `src/guards.js` | path limits, the secret scan, confirmations |
-| `src/tests.js` | running a site's tests in the sandbox |
+| `src/sandbox.js` | the sandbox that tests, the preview server and installs run in |
+| `src/tests.js` | running a site's tests |
 | `src/starter.js`, `templates/starter/` | the starter site |
 | `src/guide.js` | the hosting guide |
 

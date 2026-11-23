@@ -55,6 +55,34 @@ Built while the owner was away, so without the throwaway GitHub repo.
 - **Never run against GitHub itself:** `git push` over HTTPS with gh's sign-in, `gh pr create`, `gh pr merge`, `gh release create`, and GitHub's release-notes call. These are the first things to try with a throwaway repo.
 - GitHub's push protection may refuse a push that contains a secret Roadie's own scan missed. Roadie reports that refusal; it does not try to get round it.
 
+## Independent review, and what changed because of it
+
+A fresh reviewer read the safety-critical code looking for ways to break the rules in the README. It found real holes. All are fixed and each has a test.
+
+| Finding | Fix |
+|---|---|
+| The AI could reach `.git` by writing `.GIT/config` (macOS ignores case) | Folder and secret names are compared the way the file system compares them |
+| The preview ran AI-edited server code with the owner's full access | The preview server and install commands run in the sandbox, like tests |
+| Sandboxed tests could call Roadie's own API on localhost and press its buttons | Roadie's ports are closed to sandboxed code; the page and token are only given to the browser that came with the launch link |
+| The test sandbox could read the whole home folder and write almost anywhere | Reads in the home folder are limited to the site, tools and caches; writes to the site, temp and caches; no keychain |
+| A `.gitattributes` rule could hide file contents from the secret scan | The scan reads real content regardless of attributes |
+| File search followed links out of the site, and a bad pattern could freeze Roadie | Search checks every file like Read does, and takes plain text only |
+| A failed first push left an empty repo stuck | The push can be retried on its own |
+| A slow health check could bring a finished change back | A check that finishes late writes nothing |
+| A merge could be recorded without its commit, blocking staging and release | The merge is recorded at once and the commit filled in when GitHub reports it |
+| A test pass could be credited to files edited during the run, or to another site | A pass counts for the site and files it started on; switching sites mid-step is refused |
+| Checks were not re-read at the moment of merging | They are |
+| Abandon was not offered while a pull request was open | It always is |
+| The preview proxy answered to any host name | It answers only as this machine |
+| A site that rewrites its own files on start restarted for ever | Automatic restarts stop after four in quick succession, with a message |
+
+**What is still not defended against:**
+
+- **Linux has no sandbox.** Everything in the table that depends on the sandbox holds on macOS only. Roadie warns about this in the window and the README says so. A Linux sandbox (bubblewrap) is the most important piece of future work.
+- **Install commands have the internet.** They cannot use the owner's sign-ins or write outside the site, but a malicious install script could send the site's own files somewhere. They can also read `~/.npmrc`, which may hold a registry token.
+- **Other programs running as the same user**, outside the sandbox, are not something Roadie can defend against: they could use git and gh directly.
+- macOS `sandbox-exec` is deprecated by Apple, though it still works and is widely used.
+
 ## Decision taken, to confirm with the owner
 
 - **First commit in an empty repo.** A new GitHub repo has no branch, so something has to be pushed to `main` once before pull requests can exist. Roadie offers "Make the first commit" only when GitHub has no commits at all, with the usual confirmation, and refuses it ever after. This is the single exception to "never push to main". It was implemented without the owner's answer; say if it should go.
