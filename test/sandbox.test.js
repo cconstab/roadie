@@ -125,3 +125,18 @@ test("the preview's server runs in the box too", { skip }, async (t) => {
   assert.deepEqual(tried, { roadie: 'blocked', home: 'blocked', hook: 'blocked' });
   assert.ok(!fs.existsSync(probe));
 });
+
+test('tests may read secret-looking files that are committed, but not private ones', { skip }, async (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { '.env': 'TOKEN=private-do-not-leak\n', '.env.test': 'TOKEN=fixture-ok\n', 'test/fixtures/server.pem': 'fixture-cert-ok\n' });
+  const tracked = ['.env.test', 'test/fixtures/server.pem']; // what git says is in the repo
+  const r = await runTests({ dir, command: 'cat .env.test test/fixtures/server.pem; cat .env', tracked });
+  assert.match(r.output, /fixture-ok/);
+  assert.match(r.output, /fixture-cert-ok/);
+  assert.doesNotMatch(r.output, /private-do-not-leak/);
+  assert.match(r.output, /Note from Roadie: this ran in Roadie's sandbox/, 'the refusal is explained');
+
+  // Without the list, every secret-looking file is withheld.
+  const cautious = await runTests({ dir, command: 'cat .env.test; true' });
+  assert.doesNotMatch(cautious.output, /fixture-ok/);
+});

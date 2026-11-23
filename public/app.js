@@ -370,10 +370,12 @@ function setState(next) {
 $('open-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
+    const opened = await api('POST', '/api/open', { repo: $('repo').value });
+    // Only once the new site is open: a refused Open leaves the current one as it was.
     frameUrl = null;
     framePath = '/';
     $('log').textContent = '';
-    setState(await api('POST', '/api/open', { repo: $('repo').value }));
+    setState(opened);
     if (state.site.blank) showStarter(); else showSettings();
   } catch (err) {
     showProblem(err.message);
@@ -666,9 +668,17 @@ async function runTestsNow() {
   $('tests-output').textContent = '';
   showTests(null);
   await working('Running tests…', async () => {
-    const result = await api('POST', '/api/change/tests');
-    showTests(result);
-    await loadChange();
+    try {
+      const result = await api('POST', '/api/change/tests');
+      showTests(result);
+    } catch (err) {
+      $('tests-status').textContent = 'not run';
+      $('tests-status').className = 'pill failed';
+      $('tests-note').textContent = err.message;
+      throw err;
+    } finally {
+      await loadChange();
+    }
   });
 }
 

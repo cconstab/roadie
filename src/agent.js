@@ -421,6 +421,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       }
     } finally {
       if (query === q) { query = null; endFeed(feed); feed = null; }
+      interrupted = false;
       setBusy(false);
     }
   }
@@ -448,7 +449,14 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       if (!status.ready) throw new Error(status.problem);
       add({ role: 'user', text: trimmed });
       setBusy(true);
-      if (!query) start();
+      if (!query) {
+        try { start(); } catch (err) {
+          query = null;
+          setBusy(false);
+          add({ role: 'error', text: `The AI could not be started: ${err.message}` });
+          return;
+        }
+      }
       const content = context ? `${trimmed}\n\n<background from="Roadie">\n${context}\n</background>` : trimmed;
       feed.inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
       feed.wake?.();

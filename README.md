@@ -25,9 +25,10 @@ export ANTHROPIC_API_KEY=sk-ant-...  # skip this if you will use Ollama
 npm start                            # opens your browser
 ```
 
-`npm start` prints a link and opens it. Use that link: it carries a one-time key,
-and Roadie will not show itself to a browser (or anything else on your machine)
-that arrives without it. The link changes each time Roadie starts.
+`npm start` prints a link and opens it. Use that link: it carries a key, and
+Roadie will not show itself to a browser (or anything else on your machine) that
+arrives without it. The key lasts until you stop Roadie and changes each time it
+starts.
 
 Roadie checks git and gh when it starts and tells you plainly if something is
 missing or not signed in. It listens on `127.0.0.1` only, and stops every process
@@ -177,9 +178,10 @@ all three inside a sandbox, where that code:
   packages.
 - **cannot write outside the site**, apart from temp folders and package caches,
   and never to the site's `.git` folder.
-- **cannot read the site's secret files** (such as `.env`) from tests, because test
-  output is shown to the AI. The running preview can read them: a site needs its
-  settings to run.
+- **cannot read the site's private secret files** (such as an uncommitted `.env`)
+  from tests, because test output is shown to the AI. Secret-looking files that
+  are committed in the repo, such as test fixtures, can be read. The running
+  preview can read them all: a site needs its settings to run.
 
 Roadie also never runs git hooks, or any helper program named in a clone's git
 settings.
@@ -256,8 +258,8 @@ Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different p
 - **Staging never reports the new build**: the merge is done; the deploy is not.
   Check the publish job on GitHub and the update script on the server
   (`deploy/update.sh` by hand prints what it is doing).
-- **A change is stuck**: **Abandon this change** always gets you back to `main`
-  without deleting your edits.
+- **A change is stuck**: **Abandon this change** is offered at every stage and
+  always gets you back to `main` without deleting your edits.
 
 ## Developing Roadie
 

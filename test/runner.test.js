@@ -139,3 +139,43 @@ test('only non-static changes restart the site', () => {
   assert.equal(needsRestart(['index.html', 'server.js']), true);
   assert.equal(needsRestart(['package.json']), true);
 });
+
+test('a site that rewrites its own files on every start is not restarted for ever', async () => {
+  const { createRestartGuard } = await import('../src/watcher.js');
+  let time = 10_000;
+  const guard = createRestartGuard({ now: () => time });
+
+  // A loop: the same file changes just after each restart.
+  assert.equal(guard.allow(['server.js']), true, 'the first change always restarts');
+  for (let i = 0; i < 2; i++) { guard.started(); time += 400; assert.equal(guard.allow(['cache/build.json']), true); }
+  guard.started(); time += 400;
+  assert.equal(guard.allow(['cache/build.json']), false, 'third time in a row: held back');
+  guard.started(); time += 400;
+  assert.equal(guard.allow(['cache/build.json']), false);
+
+  // Someone editing: different files in quick succession are never held back.
+  const editing = createRestartGuard({ now: () => time });
+  for (const file of ['server.js', 'routes.js', 'package.json', 'lib/a.js', 'lib/b.js', 'lib/c.js']) {
+    editing.started(); time += 300;
+    assert.equal(editing.allow([file]), true, file);
+  }
+  // Nor is the same file edited with pauses, however many times.
+  for (let i = 0; i < 6; i++) { editing.started(); time += 5000; assert.equal(editing.allow(['server.js']), true); }
+  // And after a held-back loop, a real edit restarts again.
+  guard.started(); time += 6000;
+  assert.equal(guard.allow(['server.js']), true);
+});
+
+test('git-hook installers are told to stand down, and failures in the sandbox are explained', async (t) => {
+  const { sandboxHint } = await import('../src/sandbox.js');
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'server.js': SERVER });
+  const runner = new Runner();
+  t.after(() => runner.stop());
+  const status = await runner.start({ dir, command: 'node server.js', install: 'test "$HUSKY" = 0 && mkdir node_modules' });
+  assert.equal(status.state, 'running', 'the install saw HUSKY=0');
+
+  assert.match(sandboxHint('sh: /Users/x/file: Operation not permitted', 'tests'), /Roadie's sandbox.*cannot reach the internet/s);
+  assert.doesNotMatch(sandboxHint('npm ERR! EPERM: open', 'install'), /cannot reach the internet/);
+  assert.equal(sandboxHint('AssertionError: 1 !== 2', 'tests'), '');
+});

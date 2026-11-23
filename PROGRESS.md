@@ -76,6 +76,19 @@ A fresh reviewer read the safety-critical code looking for ways to break the rul
 | The preview proxy answered to any host name | It answers only as this machine |
 | A site that rewrites its own files on start restarted for ever | Automatic restarts stop after four in quick succession, with a message |
 
+### Second read of the fixes
+
+A second reviewer checked the fixes for correctness and regressions. It judged 11 of the 14 correct and found more to fix, all now done with tests:
+
+- After a merge or a closed pull request, one more edit left the change with no usable button. Abandon is now offered at every stage.
+- Roadie's session cookie reached the previewed site's server on WebSocket connections, and was the same value as the API token. It is now stripped on every kind of request, has its own secret, and is named per port (so two Roadies do not log each other out).
+- The restart limiter could drop real restarts during quick editing and missed slow loops. It now holds back only when the very same files change straight after each restart.
+- Tests could not read committed fixtures with secret-looking names (`.env.test`, `*.pem`). Only uncommitted ones are withheld now.
+- A failure caused by the sandbox now says so, instead of a bare "Operation not permitted". Git-hook installers (husky) are told to stand down during installs.
+- Smaller: chat could be left "busy" if the AI failed to start; a stale health check could stop a newer watch; saves could overwrite a concurrent update; a health URL reporting the full commit id did not match; a run that dirtied files had no override.
+
+Known limits the sandbox places on ordinary sites (by design, documented in the README): tests that need the internet, a headless browser, Docker or a database socket will not pass inside Roadie.
+
 **The sandbox has not had an adversarial test by a second party.** A follow-up review that was asked to try to break out of the sandbox was stopped by the AI model's own safety filters, so that probing did not happen. The limits were checked one by one (see `test/sandbox.test.js`), but nobody other than the author has tried to defeat them. Worth having a security-minded person do so.
 
 **What is still not defended against:**

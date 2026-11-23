@@ -137,3 +137,37 @@ test('when the site is down the preview says so and can still reload itself', as
   assert.equal(refused.status, 502);
   assert.match(await refused.text(), /not answering/);
 });
+
+test("Roadie's own cookies never reach the site, on ordinary requests or WebSocket ones", async (t) => {
+  const { withoutRoadieCookies } = await import('../src/proxy.js');
+  assert.equal(withoutRoadieCookies('roadie_session_4747=secret'), '');
+  assert.equal(withoutRoadieCookies('theme=dark; roadie_session_4747=secret; cart=3'), 'theme=dark; cart=3');
+  assert.equal(withoutRoadieCookies('roadie_session=old-style; a=1'), 'a=1');
+
+  const { base, port, seen } = await setup(t);
+  await fetch(base + '/', { headers: { Cookie: 'theme=dark; roadie_session_4747=secret' } });
+  assert.equal(seen.at(-1).headers.cookie, 'theme=dark', "the site's own cookies still get through");
+  await fetch(base + '/', { headers: { Cookie: 'roadie_session_4747=secret' } });
+  assert.equal(seen.at(-1).headers.cookie, undefined);
+
+  // A WebSocket upgrade (what a dev server's live-reload uses) goes through a different path.
+  const net = await import('node:net');
+  const upstreamSaw = await new Promise((resolve, reject) => {
+    const upstream = net.createServer((sock) => sock.once('data', (d) => { resolve(d.toString()); sock.destroy(); }));
+    upstream.listen(0, '127.0.0.1', async () => {
+      const proxyMod = await import('../src/proxy.js');
+      const p = proxyMod.createPreviewProxy({ getTarget: () => ({ host: '127.0.0.1', port: upstream.address().port }) });
+      const pp = await p.listen(0);
+      t.after(async () => { await p.close(); upstream.close(); });
+      const client = net.connect(pp, '127.0.0.1', () => {
+        client.write(`GET /hmr HTTP/1.1\r\nHost: 127.0.0.1:${pp}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nCookie: roadie_session_4747=secret; theme=dark\r\nSec-WebSocket-Key: x\r\n\r\n`);
+      });
+      client.on('error', reject);
+      t.after(() => client.destroy());
+    });
+  });
+  assert.match(upstreamSaw, /^GET \/hmr HTTP\/1\.1/);
+  assert.match(upstreamSaw, /Cookie: theme=dark\r\n/);
+  assert.doesNotMatch(upstreamSaw, /roadie_session|secret/);
+  assert.ok(port > 0);
+});

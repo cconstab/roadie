@@ -42,3 +42,25 @@ export function watchSite({ dir, gitops, onChange, debounceMs = 150 }) {
     },
   };
 }
+
+// A site that writes into its own folder as it starts would be restarted for
+// ever. The sign of that is the very same files changing again just after each
+// restart. Someone (or the AI) editing quickly changes different files, or the
+// same file with pauses, and is never held back.
+export function createRestartGuard({ windowMs = 3000, limit = 3, now = () => Date.now() } = {}) {
+  let lastStart = 0;
+  let lastKey = '';
+  let repeats = 0;
+  return {
+    // Call when a restart has finished.
+    started() { lastStart = now(); },
+    // Should this change restart the site?
+    allow(files) {
+      const key = [...files].sort().join('\n');
+      const soon = lastStart > 0 && now() - lastStart < windowMs;
+      repeats = soon && key === lastKey ? repeats + 1 : (soon ? 1 : 0);
+      lastKey = key;
+      return repeats < limit;
+    },
+  };
+}

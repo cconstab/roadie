@@ -363,3 +363,21 @@ test('a message sent after the AI process has died goes to its replacement', asy
   assert.equal(chat.items.at(-1).text, 'process 2 got: second');
   assert.equal(chat.busy, false);
 });
+
+test('if the AI cannot be started, the chat says so and stays usable', (t) => {
+  const s = site(t);
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const sdk = fakeSdk();
+  let fail = true;
+  const realQuery = sdk.query;
+  sdk.query = (args) => { if (fail) throw new Error('Native CLI binary for darwin-arm64 not found'); return realQuery(args); };
+  const chat = createChat({ sdk, z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), emit: () => {} });
+  t.after(() => chat.close());
+  chat.send('hello');
+  assert.equal(chat.busy, false, 'not left busy');
+  assert.match(chat.items.at(-1).text, /could not be started: Native CLI binary/);
+  fail = false;
+  chat.send('hello again'); // and the next message goes through
+  assert.equal(chat.busy, true);
+});

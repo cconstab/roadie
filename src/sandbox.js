@@ -56,8 +56,12 @@ function toolFolders(home, env) {
   return [...out];
 }
 
-// Files in the site that look like secrets. Tests may not read them: their output goes to the AI.
-function siteSecrets(siteDir, limit = 2000) {
+// Files in the site that look like secrets and are private to this machine.
+// Tests may not read them: their output goes to the AI. A secret-looking file
+// that is committed in the repo (a test fixture, .env.test) is not private, so
+// tests may read it. Without the list of committed files, all are withheld.
+function siteSecrets(siteDir, tracked, limit = 2000) {
+  const committed = tracked ? new Set(tracked) : null;
   const found = [];
   const walk = (dir, depth) => {
     if (depth > 6 || found.length > 200) return;
@@ -68,7 +72,7 @@ function siteSecrets(siteDir, limit = 2000) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full, depth + 1);
-      else if (isSecretPath(entry.name)) found.push(full);
+      else if (isSecretPath(entry.name) && !(committed && committed.has(path.relative(siteDir, full).split(path.sep).join('/')))) found.push(full);
     }
   };
   walk(siteDir, 0);
@@ -79,7 +83,7 @@ function siteSecrets(siteDir, limit = 2000) {
 // blockPorts: Roadie's own ports, which site code must never reach.
 // openNetwork: let a running site reach the internet (a per-site choice).
 // protect: extra files that must be neither read nor written (Roadie's config).
-export function sandboxProfile({ siteDir, mode, blockPorts = [], openNetwork = false, protect = [], home = os.homedir(), env = process.env }) {
+export function sandboxProfile({ siteDir, mode, blockPorts = [], openNetwork = false, protect = [], tracked = null, home = os.homedir(), env = process.env }) {
   const site = real(siteDir);
   const h = real(home);
   const internet = mode === 'install' || (mode === 'preview' && openNetwork);
@@ -115,7 +119,7 @@ export function sandboxProfile({ siteDir, mode, blockPorts = [], openNetwork = f
   // Even inside tool folders, never these.
   lines.push(`(deny file-read-data (regex #"/\\.(ssh|aws|gnupg|docker|kube|azure)(/|$)") (regex #"/\\.config/(gh|gcloud|op|hub)(/|$)") (regex #"/(\\.git-credentials|\\.netrc|\\.pgpass|hosts\\.yml)$"))`);
   if (mode === 'tests') {
-    const secrets = siteSecrets(site);
+    const secrets = siteSecrets(site, tracked);
     if (secrets.length) lines.push(`(deny file-read-data ${secrets.map((f) => `(literal ${q(f)})`).join(' ')})`);
   }
 
@@ -138,13 +142,21 @@ export function sandboxProfile({ siteDir, mode, blockPorts = [], openNetwork = f
 
 // Starts a shell command inside the sandbox. Without a sandbox it starts it plainly
 // and says so in the returned object, so callers can tell the person.
-export function spawnBoxed(command, { cwd, env, mode, blockPorts, openNetwork, protect, sandbox = sandboxAvailable(), stdio = ['ignore', 'pipe', 'pipe'] }) {
+export function spawnBoxed(command, { cwd, env, mode, blockPorts, openNetwork, protect, tracked, sandbox = sandboxAvailable(), stdio = ['ignore', 'pipe', 'pipe'] }) {
   const options = { cwd, env, detached: true, stdio }; // its own process group, so the whole tree can be stopped
   const child = sandbox
-    ? spawn(SANDBOX_EXEC, ['-p', sandboxProfile({ siteDir: cwd, mode, blockPorts, openNetwork, protect, env }), '/bin/sh', '-c', command], options)
+    ? spawn(SANDBOX_EXEC, ['-p', sandboxProfile({ siteDir: cwd, mode, blockPorts, openNetwork, protect, tracked, env }), '/bin/sh', '-c', command], options)
     : spawn(command, { ...options, shell: true });
   child.sandboxed = !!sandbox;
   return child;
+}
+
+// When boxed code fails because the box refused something, say so: the raw
+// "Operation not permitted" does not tell anyone that Roadie is the reason.
+export function sandboxHint(output, mode) {
+  if (!/Operation not permitted|EPERM|sandbox/i.test(String(output))) return '';
+  const net = mode === 'install' ? '' : ' and cannot reach the internet';
+  return `\nNote from Roadie: this ran in Roadie's sandbox, which refused something it tried to do. Site code cannot use your sign-ins, read your home folder, write outside the site folder${net}. See "The sandbox for site code" in Roadie's README.`;
 }
 
 // Roadie's own ports and files, set once at start so every boxed process is kept away from them.

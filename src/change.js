@@ -48,7 +48,10 @@ export function nextVersions(tags) {
 // as v1.2.0 does not match v1.2.01.
 export function healthMatches(body, needle) {
   if (!needle || typeof body !== 'string') return false;
-  const boundary = new RegExp(`(^|[^A-Za-z0-9.])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9.])`);
+  // A commit id may be reported in full: the short form matches as its beginning.
+  // A tag must match whole: v1.2.0 is not v1.2.0-beta.
+  const isCommit = /^[0-9a-f]{7,40}$/.test(needle);
+  const boundary = new RegExp(`(^|[^A-Za-z0-9.])${needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${isCommit ? '[0-9a-f]*($|[^A-Za-z0-9.])' : '($|[^A-Za-z0-9.+-])'}`);
   try {
     const values = [];
     const walk = (v) => {
@@ -115,7 +118,11 @@ export function changeView(f) {
   if (!canStaging) set('staging', 'skipped', 'No staging URL or health path is set for this site.');
   if (!canProduction) set('production', 'skipped', 'No production URL or health path is set for this site.');
 
-  const finish = () => ({ steps: STEPS.map((s) => ({ ...s, status: status[s.id], detail: detail[s.id] })), stage, next, also, note });
+  const finish = () => {
+    // Whatever state a change is in, there is always a way out of it.
+    if (record && !also.some((a) => a.id === 'discard')) also.push({ id: 'discard', label: 'Abandon this change' });
+    return { steps: STEPS.map((s) => ({ ...s, status: status[s.id], detail: detail[s.id] })), stage, next, also, note };
+  };
 
   if (!record) {
     if (f.remoteEmpty) {
@@ -173,6 +180,8 @@ export function changeView(f) {
       if (verdict === 'failed') {
         note = 'The tests fail. Hand the failure to the AI, or fix it yourself, then run them again.';
         also.push({ id: 'ask-ai', label: 'Ask the AI to fix it' }, { id: 'override', label: 'Open PR anyway…' });
+      } else if (record.tests && record.tests.dirtied) {
+        also.push({ id: 'override', label: 'Open PR anyway…' });
       }
     }
     also.push({ id: 'discard', label: 'Abandon this change' });
@@ -238,7 +247,7 @@ export function changeView(f) {
   set('merge', 'done', record.merge && record.merge.sha ? short(record.merge.sha) : '');
   stage = 'merged';
   if (!record.merge || !record.merge.sha) {
-    note = 'The pull request is merged. GitHub has not yet said which commit that made; Roadie is asking again.';
+    note = 'The pull request is merged. GitHub has not yet said which commit that made. Roadie keeps asking; Check again asks now.';
     next = { id: 'refresh', label: 'Check again', enabled: true };
     also.push({ id: 'finish', label: 'Finish without releasing' });
     return finish();

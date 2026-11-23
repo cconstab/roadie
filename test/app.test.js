@@ -64,6 +64,8 @@ test('the page, and the token in it, is only given to the browser that came with
   assert.match(cookie, /HttpOnly/);
   assert.match(cookie, /SameSite=Strict/);
   assert.equal(cookie.split(';')[0], app.cookie);
+  assert.ok(!cookie.includes(app.token), 'the cookie is its own secret, not the API token');
+  assert.ok(cookie.startsWith(`roadie_session_${port}=`), 'named for this port, so a second Roadie does not replace it');
 
   const page = await raw(port, { headers: { ...host, Cookie: app.cookie } });
   assert.equal(page.status, 200);

@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
-import { roadieFiles, roadiePorts, spawnBoxed } from './sandbox.js';
+import { roadieFiles, roadiePorts, sandboxHint, spawnBoxed } from './sandbox.js';
 import { createStaticServer } from './static.js';
 
 // Every child process group Roadie has started and not yet seen exit.
@@ -52,7 +52,9 @@ export function childEnv(extra) {
   for (const key of Object.keys(env)) {
     if (/^(ANTHROPIC_|CLAUDE_|AWS_BEARER_TOKEN_BEDROCK|GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/.test(key)) delete env[key];
   }
-  return { ...env, ...extra };
+  // Git-hook installers (husky) cannot write to .git in the sandbox, and Roadie
+  // never runs hooks anyway, so tell them to stand down.
+  return { ...env, HUSKY: '0', ...extra };
 }
 
 // Register a child started elsewhere so it is stopped when Roadie exits.
@@ -68,6 +70,7 @@ export class Runner extends EventEmitter {
     this.child = null;
     this.staticServer = null;
     this.status = { state: 'stopped', mode: null, host: null, port: null, error: null };
+    this.recent = ''; // the last of the site's own output
     this.lastPort = null;
     this.generation = 0;
   }
@@ -78,7 +81,14 @@ export class Runner extends EventEmitter {
   }
 
   log(line, stream = 'roadie') {
+    if (stream !== 'roadie') this.recent = (this.recent + line + '\n').slice(-4000);
     this.emit('log', { stream, line });
+  }
+
+  // After a failure, say so if the sandbox looks like the reason.
+  explain(child, mode) {
+    const hint = child.sandboxed ? sandboxHint(this.recent, mode).trim() : '';
+    if (hint) this.log(hint);
   }
 
   // Run a one-off shell command in the site folder (used for install), streaming its output.
@@ -90,7 +100,7 @@ export class Runner extends EventEmitter {
       live.add(child);
       this.pipeLogs(child);
       child.on('error', (err) => { live.delete(child); this.log(err.message); resolve(1); });
-      child.on('close', (code) => { live.delete(child); resolve(code ?? 1); });
+      child.on('close', (code) => { live.delete(child); if (code) this.explain(child, 'install'); resolve(code ?? 1); });
     });
   }
 
@@ -163,6 +173,7 @@ export class Runner extends EventEmitter {
     while (Date.now() < deadline) {
       if (generation !== this.generation) return this.status; // stopped or restarted meanwhile
       if (exited) {
+        this.explain(child, 'preview');
         this.setStatus({ state: 'failed', error: `The start command exited straight away (${exited.signal || 'exit ' + exited.code}). See the log.` });
         return this.status;
       }

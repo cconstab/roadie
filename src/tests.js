@@ -5,13 +5,14 @@
 // in sandbox.js: no network beyond this machine, no way to Roadie's own ports,
 // no sign-in or secrets, and no writing outside the site and temp folders.
 import { childEnv, trackChild } from './runner.js';
-import { roadieFiles, roadiePorts, sandboxAvailable, spawnBoxed } from './sandbox.js';
+import { roadieFiles, roadiePorts, sandboxAvailable, sandboxHint, spawnBoxed } from './sandbox.js';
 
 export { sandboxAvailable };
 
 const MAX_OUTPUT = 60_000;
 
-export function runTests({ dir, command, timeoutMs = 300_000, onOutput, sandbox = sandboxAvailable() }) {
+// tracked: the files committed in the repo, if known (see sandbox.js for why it matters).
+export function runTests({ dir, command, timeoutMs = 300_000, onOutput, tracked = null, sandbox = sandboxAvailable() }) {
   return new Promise((resolve) => {
     if (!command) {
       return resolve({ passed: false, code: null, output: 'This site has no test command. Set one in Site settings.', sandboxed: false, timedOut: false, durationMs: 0 });
@@ -19,7 +20,7 @@ export function runTests({ dir, command, timeoutMs = 300_000, onOutput, sandbox 
     const started = Date.now();
     const child = spawnBoxed(command, {
       cwd: dir, env: childEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }), mode: 'tests',
-      blockPorts: roadiePorts(), protect: roadieFiles(), sandbox,
+      blockPorts: roadiePorts(), protect: roadieFiles(), tracked, sandbox,
     });
     const untrack = trackChild(child);
 
@@ -44,6 +45,7 @@ export function runTests({ dir, command, timeoutMs = 300_000, onOutput, sandbox 
       untrack();
       if (output.length > MAX_OUTPUT) output = '[earlier output cut]\n' + output.slice(-MAX_OUTPUT);
       if (timedOut) output += `\nStopped: the tests ran longer than ${Math.round(timeoutMs / 1000)} seconds.`;
+      if (code !== 0 && child.sandboxed) output += sandboxHint(output, 'tests');
       resolve({ passed: code === 0 && !timedOut, code, output, sandboxed: child.sandboxed, timedOut, durationMs: Date.now() - started });
     };
     child.on('error', (err) => { output += err.message; finish(127); });

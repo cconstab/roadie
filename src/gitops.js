@@ -156,6 +156,13 @@ export function createGitOps({ run = realRun } = {}) {
       return must(git(dir, ['merge', '--ff-only', `origin/${branch}`]), `Updating ${branch}`);
     },
 
+    // Files that are committed in the repo (so not private to this machine).
+    async trackedFiles(dir) {
+      const r = await git(dir, ['ls-files', '-z', '--cached']);
+      if (r.code !== 0) throw new Error(`Listing files failed: ${r.stderr.trim()}`);
+      return r.stdout.split('\0').filter(Boolean);
+    },
+
     // Every file in the working tree that is tracked or new, minus ignored ones.
     async listFiles(dir) {
       const r = await git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);

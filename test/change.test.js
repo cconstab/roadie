@@ -259,3 +259,49 @@ test('the AI\'s pull request draft is read whether it is JSON or plain text', ()
   assert.equal(parseDraft(''), null);
   assert.equal(parseDraft('{"nope": 1}').title, '{"nope": 1}');
 });
+
+test('every stage of a change offers a way out', () => {
+  const open = { number: 7, url: 'u', state: 'OPEN', mergeable: 'MERGEABLE' };
+  const merged = { number: 7, url: 'u', state: 'MERGED' };
+  const cases = {
+    'new, no edits': onBranch(rec(), { filesChanged: 0 }),
+    'tests not run': onBranch(rec()),
+    'tests failed': onBranch(rec({ tests: { passed: false, tree: 'T1' } })),
+    'ready for PR': onBranch(rec({ tests: { passed: true, tree: 'T1' } })),
+    'PR open, checks running': onBranch(rec({ pr: open, pushedTree: 'T1' }), { pr: open, checks: { state: 'pending', total: 1, passing: 0, pending: 1, failing: [] } }),
+    'PR open, checks green': onBranch(rec({ pr: open, pushedTree: 'T1' }), { pr: open, checks: PASS }),
+    'PR open, conflicts': onBranch(rec({ pr: open, pushedTree: 'T1' }), { pr: { ...open, mergeable: 'CONFLICTING' }, checks: PASS }),
+    'PR open, newer edits': onBranch(rec({ pr: open, pushedTree: 'OLD' }), { pr: open, checks: PASS }),
+    'PR closed': onBranch(rec({ pr: { ...open, state: 'CLOSED' } }), { pr: { ...open, state: 'CLOSED' } }),
+    'merged, commit unknown': onBranch(rec({ pr: merged, merge: { sha: null } }), { pr: merged }),
+    'merged, staging next': onBranch(rec({ pr: merged, merge: { sha: 'abc1234' } }), { pr: merged }),
+    'merged, release next': onBranch(rec({ pr: merged, merge: { sha: 'abc1234' }, staging: { live: true } }), { pr: merged }),
+    'released, production next': onBranch(rec({ pr: merged, merge: { sha: 'abc1234' }, staging: { live: true }, release: { tag: 'v1' } }), { pr: merged }),
+    'all done': onBranch(rec({ pr: merged, merge: { sha: 'abc1234' }, staging: { live: true }, release: { tag: 'v1' }, production: { live: true } }), { pr: merged }),
+  };
+  for (const [name, facts] of Object.entries(cases)) {
+    const v = changeView(facts);
+    assert.equal(v.also.filter((a) => a.id === 'discard').length, 1, `${name}: Abandon is offered, once`);
+    assert.ok(v.next, `${name}: there is a next step`);
+  }
+  // With no change in progress there is nothing to abandon.
+  assert.ok(!changeView(base()).also.some((a) => a.id === 'discard'));
+  assert.equal(changeView(cases['merged, commit unknown']).next.id, 'refresh');
+});
+
+test('a test run that changed files can be overridden, like a failing one', () => {
+  const v = changeView(onBranch(rec({ tests: { passed: true, tree: 'OLD', dirtied: true } })));
+  assert.equal(v.next.id, 'tests');
+  assert.ok(v.also.some((a) => a.id === 'override'));
+  assert.match(v.steps[1].detail, /add those files to \.gitignore/);
+  const plainStale = changeView(onBranch(rec({ tests: { passed: true, tree: 'OLD' } })));
+  assert.ok(!plainStale.also.some((a) => a.id === 'override'));
+});
+
+test('a health answer that gives the commit in full still matches the short form', () => {
+  const full = '038052b3762ac180e251b199bb9e229ab1561888';
+  assert.equal(healthMatches(`{"version":"${full}"}`, '038052b'), true);
+  assert.equal(healthMatches(`{"version":"main-${full}"}`, '038052b'), true);
+  assert.equal(healthMatches(`{"commit":"1${full}"}`, '038052b'), false, 'not when it is only somewhere in the middle');
+  assert.equal(healthMatches('{"version":"v1.2.0-beta"}', 'v1.2.0'), false, 'a tag is still matched exactly');
+});

@@ -20,6 +20,11 @@ const RELOAD_JS = `(function () {
 })();
 `;
 
+// A Cookie header with Roadie's own cookies taken out ('' if nothing is left).
+export function withoutRoadieCookies(header) {
+  return String(header).split(';').map((c) => c.trim()).filter((c) => c && !/^roadie_session/i.test(c)).join('; ');
+}
+
 export function stripFrameAncestors(policy) {
   return String(policy)
     .split(';')
@@ -103,8 +108,8 @@ export function createPreviewProxy({ getTarget }) {
     delete headers['accept-encoding'];
     // Roadie's own session cookie is for Roadie, not for the site being previewed.
     if (headers.cookie) {
-      const kept = headers.cookie.split(';').map((c) => c.trim()).filter((c) => c && !c.startsWith('roadie_session='));
-      if (kept.length) headers.cookie = kept.join('; '); else delete headers.cookie;
+      const kept = withoutRoadieCookies(headers.cookie);
+      if (kept) headers.cookie = kept; else delete headers.cookie;
     }
 
     const upstream = http.request(
@@ -142,7 +147,14 @@ export function createPreviewProxy({ getTarget }) {
     if (!target || !rightHost(req)) return socket.destroy();
     const up = net.connect({ host: target.host, port: target.port }, () => {
       const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
-      for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        let value = req.rawHeaders[i + 1];
+        if (req.rawHeaders[i].toLowerCase() === 'cookie') {
+          value = withoutRoadieCookies(value);
+          if (!value) continue;
+        }
+        lines.push(`${req.rawHeaders[i]}: ${value}`);
+      }
       up.write(lines.join('\r\n') + '\r\n\r\n');
       if (head && head.length) up.write(head);
       up.pipe(socket);

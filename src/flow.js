@@ -70,7 +70,7 @@ export function createFlow({
   async function facts() {
     resetIfSiteChanged();
     const s = site();
-    const r = record();
+    let r = record();
     const branch = await gitops.currentBranch(s.dir);
     const hasCommits = await gitops.hasCommits(s.dir);
     if (remote.remoteEmpty === undefined || remote.remoteEmpty) {
@@ -79,6 +79,12 @@ export function createFlow({
       remote.remoteEmpty = seen ? false : await gitops.remoteIsEmpty(s.dir).catch(() => false);
     }
     const changes = await gitops.changes(s.dir, (r && r.base) || 'HEAD');
+    if (r) {
+      // "Still checking" is true only while a watch is actually running in this process.
+      for (const which of ['staging', 'production']) {
+        if (r[which] && r[which].polling && !healthTimers[which]) r = { ...r, [which]: { ...r[which], polling: false } };
+      }
+    }
     return {
       site: s, record: r, branch, hasCommits, changes,
       defaultBranch: s.defaultBranch,
@@ -170,7 +176,9 @@ export function createFlow({
       await refreshRemote();
       const r = record();
       const state = remote.checks ? summarizeChecks(remote.checks).state : 'unknown';
-      if (!r || !r.pr || r.merge || (remote.pr && remote.pr.state !== 'OPEN') || (state !== 'pending' && state !== 'unknown')) {
+      const awaitingCommit = !!(r && r.merge && !r.merge.sha);
+      const awaitingChecks = !!(r && r.pr && !r.merge && (!remote.pr || remote.pr.state === 'OPEN') && (state === 'pending' || state === 'unknown'));
+      if (!awaitingCommit && !awaitingChecks) {
         clearInterval(ciTimer);
         ciTimer = null;
       }
@@ -204,7 +212,7 @@ export function createFlow({
       const before = await gitops.treeId(s.dir);
       testOutput = '';
       const result = await runTests({
-        dir: s.dir, command: s.settings.test,
+        dir: s.dir, command: s.settings.test, tracked: await gitops.trackedFiles(s.dir).catch(() => null),
         onOutput: (chunk) => { testOutput = (testOutput + chunk).slice(-60_000); emit({ testChunk: chunk }); },
       });
       testOutput = result.output;
@@ -216,9 +224,10 @@ export function createFlow({
   // A result counts for the site it ran on and the files as they were when it
   // started. If files changed during the run, it counts for nothing current.
   async function creditTests(key, dir, treeBefore, result, by) {
-    const r = config.getChange(key);
-    if (!r || result.code === null) return;
+    if (result.code === null) return;
     const after = await gitops.treeId(dir);
+    const r = config.getChange(key); // read just before saving, so nothing saved meanwhile is lost
+    if (!r) return;
     config.saveChange(key, {
       ...r,
       override: null,
@@ -491,11 +500,8 @@ export function createFlow({
             ? { number: existing.number, url: existing.url }
             : await gitops.prCreate(s.key, { title, body, base: f.defaultBranch, head: r.branch });
         }
-        save({
-          ...r, pr,
-          pushedTree: await gitops.treeId(s.dir),
-          override: plan.override ? { tree: f.treeId, at: now() } : null,
-        });
+        const pushedTree = await gitops.treeId(s.dir);
+        save({ ...record(), pr, pushedTree, override: plan.override ? { tree: f.treeId, at: now() } : null });
         remote.pr = null;
         remote.checks = null;
         await refreshRemote();
@@ -516,8 +522,8 @@ export function createFlow({
           if (record().merge.sha) break;
           await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, 1500)));
         }
-        clearInterval(ciTimer);
-        ciTimer = null;
+        if (!record().merge.sha) watchCi(); // keep asking in the background
+        if (record().merge.sha) { clearInterval(ciTimer); ciTimer = null; }
         await gitops.fetch(s.dir).catch(() => {});
         return view();
       }
@@ -529,7 +535,7 @@ export function createFlow({
         }
         const notes = String(edits.notes ?? plan.editable.notes ?? '');
         const release = await gitops.releaseCreate(s.key, { tag, target: plan.target, title: tag, notes });
-        save({ ...r, release: { tag: release.tag, url: release.url, at: now() } });
+        save({ ...record(), release: { tag: release.tag, url: release.url, at: now() } });
         return view();
       }
 
@@ -586,10 +592,10 @@ export function createFlow({
         error = `No answer (${err.name === 'TimeoutError' ? 'timed out' : err.message}).`;
       }
       const timedOut = !live && now() - started > healthTimeoutMs;
-      if (live || timedOut) { clearInterval(healthTimers[which]); delete healthTimers[which]; }
       const latest = config.getChange(key);
-      // The watch may have been stopped, or the change finished or abandoned, while this check was in the air.
+      // The watch may have been stopped or replaced, or the change finished or abandoned, while this check was in the air.
       if (run !== healthRun[which] || !latest || !latest[which] || latest[which].waitingFor !== needle) return;
+      if (live || timedOut) { clearInterval(healthTimers[which]); delete healthTimers[which]; }
       config.saveChange(key, {
         ...latest,
         [which]: { url, waitingFor: needle, seen, error, live, polling: !live && !timedOut, timedOut, checkedAt: now() },
@@ -625,7 +631,7 @@ export function createFlow({
     resetIfSiteChanged();
     await refreshRemote();
     const r = getSite() && record();
-    if (r && r.pr && !r.merge) watchCi();
+    if (r && r.pr && (!r.merge || !r.merge.sha)) watchCi();
     return view();
   }
 
