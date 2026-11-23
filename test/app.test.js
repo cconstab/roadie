@@ -29,7 +29,7 @@ async function setup(t, gitops = fakeGitOps()) {
   const call = async (method, p, body) => {
     const res = await fetch(base + p, {
       method,
-      headers: { 'X-Roadie-Token': app.token, 'Content-Type': 'application/json' },
+      headers: { 'X-Roadie-Token': app.token, Cookie: app.cookie, 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, data: await res.json() };
@@ -37,17 +37,52 @@ async function setup(t, gitops = fakeGitOps()) {
   return { app, home, port, base, call, gitops };
 }
 
-test('Roadie listens on 127.0.0.1 only', async (t) => {
-  const { app, port } = await setup(t);
-  assert.ok(port > 0);
-  const page = await raw(port, { headers: { Host: `127.0.0.1:${port}` } });
+test('the page, and the token in it, is only given to the browser that came with the launch link', async (t) => {
+  const { app, port, base } = await setup(t);
+  const host = { Host: `127.0.0.1:${port}` };
+
+  // Anything else on this machine that asks for the page gets no token.
+  const stranger = await raw(port, { headers: host });
+  assert.equal(stranger.status, 403);
+  assert.ok(!stranger.body.includes(app.token));
+  assert.match(stranger.body, /link it prints in the terminal/);
+  for (const p of ['/app.js', '/api/state', '/api/events']) {
+    const res = await raw(port, { path: p, headers: { ...host, 'X-Roadie-Token': app.token } });
+    assert.equal(res.status, 403, p);
+  }
+
+  // A wrong key earns nothing.
+  const wrong = await fetch(`${base}/?key=not-the-key`, { redirect: 'manual' });
+  assert.equal(wrong.status, 403);
+  assert.equal(wrong.headers.get('set-cookie'), null);
+
+  // The launch link sets a cookie the page's own scripts cannot read, and moves on.
+  const launch = await fetch(`${base}/?key=${app.launchKey}`, { redirect: 'manual' });
+  assert.equal(launch.status, 302);
+  assert.equal(launch.headers.get('location'), '/');
+  const cookie = launch.headers.get('set-cookie');
+  assert.match(cookie, /HttpOnly/);
+  assert.match(cookie, /SameSite=Strict/);
+  assert.equal(cookie.split(';')[0], app.cookie);
+
+  const page = await raw(port, { headers: { ...host, Cookie: app.cookie } });
   assert.equal(page.status, 200);
   assert.ok(page.body.includes(app.token), 'the page carries the per-run token');
 });
 
+test('Roadie and its preview proxy listen on 127.0.0.1 only and answer only as this machine', async (t) => {
+  const { app, port } = await setup(t);
+  assert.equal(app.address().address, '127.0.0.1');
+  const proxied = await raw(app.proxyPort, { headers: { Host: 'evil.example' } });
+  assert.equal(proxied.status, 403, 'another site cannot point its name at the preview');
+  const fine = await raw(app.proxyPort, { headers: { Host: `127.0.0.1:${app.proxyPort}` } });
+  assert.equal(fine.status, 502, 'addressed properly, it answers (no site is running yet)');
+  assert.ok(port > 0);
+});
+
 test('requests for another host name are refused', async (t) => {
   const { app, port } = await setup(t);
-  const res = await raw(port, { path: '/api/state', headers: { Host: 'evil.example', 'X-Roadie-Token': app.token } });
+  const res = await raw(port, { path: '/api/state', headers: { Host: 'evil.example', 'X-Roadie-Token': app.token, Cookie: app.cookie } });
   assert.equal(res.status, 403);
 });
 
@@ -55,16 +90,17 @@ test('requests from another origin are refused, including the previewed site', a
   const { app, base } = await setup(t);
   for (const origin of ['https://evil.example', `http://127.0.0.1:${app.proxyPort}`]) {
     const res = await fetch(base + '/api/preview/start', {
-      method: 'POST', headers: { Origin: origin, 'X-Roadie-Token': app.token },
+      method: 'POST', headers: { Origin: origin, 'X-Roadie-Token': app.token, Cookie: app.cookie },
     });
     assert.equal(res.status, 403, origin);
   }
 });
 
 test('the API needs the per-run token', async (t) => {
-  const { base, call } = await setup(t);
+  const { app, base, call } = await setup(t);
   assert.equal((await fetch(base + '/api/state')).status, 403);
-  assert.equal((await fetch(base + '/api/open', { method: 'POST', body: '{}' })).status, 403);
+  assert.equal((await fetch(base + '/api/state', { headers: { Cookie: app.cookie } })).status, 403, 'the cookie alone is not enough');
+  assert.equal((await fetch(base + '/api/open', { method: 'POST', body: '{}', headers: { Cookie: app.cookie } })).status, 403);
   assert.equal((await call('GET', '/api/state')).status, 200);
 });
 
@@ -147,7 +183,7 @@ test('chat and changed files work through the API, with secrets kept out of view
   t.after(() => app.close());
   const call = async (method, p, body) => {
     const res = await fetch(`http://127.0.0.1:${port}${p}`, {
-      method, headers: { 'X-Roadie-Token': app.token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+      method, headers: { 'X-Roadie-Token': app.token, Cookie: app.cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, data: await res.json() };
   };

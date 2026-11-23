@@ -113,3 +113,40 @@ test('sandboxed tests cannot write to .git or reach beyond this machine', { skip
   const net = await runTests({ dir, command: `node -e "require('net').connect(80,'192.0.2.1').on('error',e=>{console.log(e.code);process.exit(e.code==='EPERM'?0:1)}).setTimeout(2000,()=>process.exit(2))"` });
   assert.match(net.output, /EPERM/);
 });
+
+test('the secret scan sees real content whatever .gitattributes says', async (t) => {
+  const { dir, git } = repo(t, { 'index.html': 'x\n', '.gitattributes': '*.js -diff\n*.dat binary\n' });
+  const gitops = createGitOps();
+  const key = `${'gh' + 'p_'}AbCdEfGhIjKlMnOpQrStUvWxYz0123456789`;
+  writeFiles(dir, { 'config.js': `const token = "${key}";\n`, 'blob.dat': `password=${key}\n`, 'notes.txt': '++ a line that starts with two pluses\n+++ and three\n' });
+
+  const pending = await gitops.additions(dir, 'HEAD');
+  assert.ok(pending.some((a) => a.path === 'config.js' && a.line.includes(key)), 'an untracked file marked -diff is still read');
+  assert.ok(pending.some((a) => a.path === 'blob.dat' && a.line.includes(key)), 'so is one marked binary');
+  assert.deepEqual(pending.filter((a) => a.path === 'notes.txt').map((a) => a.line), ['++ a line that starts with two pluses', '+++ and three']);
+
+  git('add', '-A');
+  const staged = await gitops.stagedAdditions(dir);
+  assert.ok(staged.some((a) => a.path === 'config.js' && a.line.includes(key)));
+  assert.ok(staged.some((a) => a.path === 'notes.txt' && a.line === '++ a line that starts with two pluses'));
+  git('commit', '-q', '-m', 'second');
+
+  // And for a change to a file that is already tracked.
+  writeFiles(dir, { 'config.js': `const token = "${key}";\nconst other = "${key}x";\n` });
+  const edited = await gitops.additions(dir, 'HEAD');
+  assert.deepEqual(edited.map((a) => a.path), ['config.js']);
+  assert.ok(edited[0].line.includes(`${key}x`));
+});
+
+test('a file-system-monitor program named in the clone is never run', async (t) => {
+  const { dir, git } = repo(t, { 'index.html': 'x\n' });
+  const marker = path.join(dir, 'monitor-ran');
+  const script = path.join(dir, 'monitor.sh');
+  fs.writeFileSync(script, `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+  git('config', 'core.fsmonitor', script);
+  const gitops = createGitOps();
+  await gitops.changes(dir);
+  await gitops.treeId(dir);
+  await gitops.isClean(dir);
+  assert.ok(!fs.existsSync(marker));
+});

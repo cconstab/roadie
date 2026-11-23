@@ -95,6 +95,8 @@
         <label>Staging URL <input name="stagingUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="stagingUrl"></small></label>
         <label>Production URL <input name="productionUrl" type="url" spellcheck="false" placeholder="optional"><small data-note="productionUrl"></small></label>
         <label>Health-check path <input name="healthPath" spellcheck="false" placeholder="optional, e.g. /api/health"><small data-note="healthPath"></small></label>
+        <label class="choice"><input type="checkbox" name="previewInternet"> Let the running site reach the internet</label>
+        <small class="under">Off by default: in the preview, the site can only talk to this machine. Turn it on if the site needs to fetch from other servers to work. Either way it cannot use your GitHub sign-in.</small>
         <label>How pull requests are merged
           <select name="mergeMethod">
             <option value="squash">Squash: one commit per change</option>

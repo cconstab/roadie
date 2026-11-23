@@ -13,13 +13,15 @@ if (process.platform === 'win32') {
 import { createApp } from './app.js';
 import { createConfig, roadieHome } from './config.js';
 import { createGitOps } from './gitops.js';
+import { stopRunningCommands } from './exec.js';
 import { killAllChildren } from './runner.js';
 
 const home = roadieHome();
 const app = await createApp({ home, gitops: createGitOps(), config: createConfig(home) });
 const port = await app.listen(Number(process.env.ROADIE_PORT) || 4747);
-const url = `http://127.0.0.1:${port}`;
-console.log(`Roadie is running at ${url}  (sites and settings: ${home})`);
+// The key in the link is what lets this browser, and nothing else, open Roadie.
+const url = `http://127.0.0.1:${port}/?key=${app.launchKey}`;
+console.log(`Roadie is running. Open it with this link:\n\n  ${url}\n\n(sites and settings: ${home})`);
 console.log('Press Ctrl+C to stop.');
 
 if (!process.env.ROADIE_NO_OPEN) {
@@ -36,6 +38,7 @@ let closing = false;
 async function shutdown(code) {
   if (closing) return;
   closing = true;
+  stopRunningCommands();
   setTimeout(() => { killAllChildren('SIGKILL'); process.exit(code); }, 5000).unref();
   try { await app.close(); } catch { /* still exit */ }
   killAllChildren('SIGKILL');

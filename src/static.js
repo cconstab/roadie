@@ -24,6 +24,13 @@ export function createStaticServer(root) {
         res.end(err ? 'Not found' : buf);
       });
     };
+    // Only answer when addressed as this machine, so another website cannot
+    // point its own name here and read the unpublished site. (Any port: the
+    // preview proxy passes on the address the browser used for the proxy.)
+    if (!/^(127\.0\.0\.1|localhost|\[::1\]):\d+$/.test(String(req.headers.host))) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Wrong host');
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { 'Content-Type': 'text/plain; charset=utf-8' });
       return res.end('Method not allowed');

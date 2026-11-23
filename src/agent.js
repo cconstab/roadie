@@ -111,22 +111,26 @@ async function visibleFiles(gitops, dir, glob) {
     !isSecretPath(f) && (!match || match.test(f) || match.test(f.split('/').pop())));
 }
 
-export async function searchFiles({ gitops, dir, query, glob, regex = false, limit = 200 }) {
-  let pattern;
-  try { pattern = new RegExp(regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
-  catch (err) { return `That is not a valid regular expression: ${err.message}`; }
+// Plain-text search, ignoring case. (No regular expressions: one written badly,
+// or on purpose, could tie up Roadie for minutes.)
+export async function searchFiles({ gitops, dir, query, glob, limit = 200 }) {
+  const needle = String(query || '').toLowerCase();
+  if (!needle) return 'Give some text to search for.';
   const hits = [];
   for (const file of await visibleFiles(gitops, dir, glob)) {
     let text;
     try {
-      const full = path.join(dir, file);
-      if (fs.statSync(full).size > 1_000_000) continue;
-      text = fs.readFileSync(full, 'utf8');
+      // The same check as Read: a link in the repo must not lead outside the site or to a secret.
+      const checked = checkSitePath(dir, file);
+      if (!checked.ok) continue;
+      const stat = fs.statSync(checked.abs);
+      if (!stat.isFile() || stat.size > 1_000_000) continue;
+      text = fs.readFileSync(checked.abs, 'utf8');
     } catch { continue; }
     if (text.includes('\0')) continue; // binary
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
-      if (pattern.test(lines[i])) {
+      if (lines[i].toLowerCase().includes(needle)) {
         hits.push(`${file}:${i + 1}: ${lines[i].trim().slice(0, 240)}`);
         if (hits.length >= limit) return hits.join('\n') + `\n(stopped at ${limit} matches; narrow the search)`;
       }
@@ -152,11 +156,10 @@ function roadieTools({ sdk, z, gitops, site, runTests }) {
         }, { alwaysLoad: true }),
       sdk.tool('search_files', 'Search the text of the site\'s files, ignoring case. Returns matching lines as path:line: text.',
         {
-          query: z.string().describe('Text to look for'),
+          query: z.string().describe('Text to look for (plain text, not a pattern)'),
           glob: z.string().optional().describe('Only search files matching this glob'),
-          regex: z.boolean().optional().describe('Treat the query as a regular expression'),
         },
-        async ({ query, glob, regex }) => text(await searchFiles({ gitops, dir, query, glob, regex })),
+        async ({ query, glob }) => text(await searchFiles({ gitops, dir, query, glob })),
         { alwaysLoad: true }),
       sdk.tool('run_tests', 'Run the site\'s test command and return its output. Takes no arguments.',
         {},
@@ -326,8 +329,6 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   let busy = false;
   let query = null;
   let closed = false;
-  const inbox = [];
-  let wake = null;
 
   // Per-reply stream state
   let textItem = null;      // the assistant text item being streamed
@@ -346,12 +347,20 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   const update = (item, patch) => { Object.assign(item, patch); emit({ op: 'update', id: item.id, patch }); };
   const setBusy = (value) => { if (busy !== value) { busy = value; emit({ op: 'busy', busy }); } };
 
-  async function* input() {
-    while (!closed) {
-      if (!inbox.length) await new Promise((resolve) => { wake = resolve; });
-      while (inbox.length) yield inbox.shift();
-    }
+  // Each AI process gets its own queue, so one that has died can never
+  // swallow a message meant for its replacement.
+  let feed = null; // { inbox, wake, done }
+  function newFeed() {
+    const f = { inbox: [], wake: null, done: false };
+    f.messages = (async function* () {
+      while (!f.done && !closed) {
+        if (!f.inbox.length) await new Promise((resolve) => { f.wake = resolve; });
+        while (f.inbox.length) yield f.inbox.shift();
+      }
+    })();
+    return f;
   }
+  const endFeed = (f) => { if (f) { f.done = true; f.wake?.(); } };
 
   function handle(m) {
     if (m.type === 'system' && m.subtype === 'init') info = { model: m.model, tools: m.tools || [] };
@@ -411,15 +420,16 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         add({ role: 'error', text: `The AI process stopped: ${err.message}${tail ? '\n' + tail : ''}` });
       }
     } finally {
-      if (query === q) query = null;
+      if (query === q) { query = null; endFeed(feed); feed = null; }
       setBusy(false);
     }
   }
 
   function start() {
-    inbox.length = 0;
+    endFeed(feed);
+    feed = newFeed();
     query = sdk.query({
-      prompt: input(),
+      prompt: feed.messages,
       options: agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); } }),
     });
     pump(query);
@@ -440,8 +450,8 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       setBusy(true);
       if (!query) start();
       const content = context ? `${trimmed}\n\n<background from="Roadie">\n${context}\n</background>` : trimmed;
-      inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
-      wake?.();
+      feed.inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
+      feed.wake?.();
     },
     async stop() {
       if (!busy || !query) return;
@@ -450,7 +460,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     },
     close() {
       closed = true;
-      wake?.();
+      endFeed(feed);
       try { query?.close(); } catch { /* already closed */ }
       query = null;
     },

@@ -7,13 +7,27 @@ const EXAMPLE = /\.(example|sample|template|dist|defaults?)$/i;
 
 // Does this file name look like it holds secrets?
 export function isSecretPath(rel) {
-  const name = String(rel).split(/[\\/]/).pop();
+  const name = foldName(String(rel).split(/[\\/]/).pop());
   if (/^\.env($|\.)/i.test(name)) return !EXAMPLE.test(name);
   if (/\.(pem|key|p12|pfx|jks|keystore)$/i.test(name)) return true;
   if (/^id_(rsa|dsa|ecdsa|ed25519)$/i.test(name)) return true;
   if (/^(\.npmrc|\.netrc|\.pgpass|\.htpasswd)$/i.test(name)) return true;
   if (/^(secrets?|credentials?)(\.[a-z0-9]+)?$/i.test(name)) return !EXAMPLE.test(name);
   return false;
+}
+
+// File systems on macOS and Windows treat ".GIT", ".git." and ".g\u200Bit" as the
+// same folder as ".git". Fold a name the way they do before comparing it.
+function foldName(name) {
+  return String(name).normalize('NFKC')
+    .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g, '')
+    .toLowerCase()
+    .replace(/[. ]+$/, '');
+}
+
+export function isGitFolderName(name) {
+  const folded = foldName(name);
+  return folded === '.git' || /^git~\d+$/.test(folded);
 }
 
 // Resolve a path the AI gave and say whether it may touch it.
@@ -43,7 +57,7 @@ export function checkSitePath(root, given) {
     return { ok: false, reason: `${given} is outside the site folder. You can only work inside ${realRoot}.` };
   }
   const rel = path.relative(realRoot, real).split(path.sep).join('/');
-  if (rel.split('/').includes('.git')) {
+  if (rel.split('/').some(isGitFolderName)) {
     return { ok: false, reason: 'The .git folder is off limits. Roadie handles git itself.' };
   }
   if (isSecretPath(rel)) {

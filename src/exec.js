@@ -1,6 +1,13 @@
 // Runs one command without a shell and always resolves, never throws.
 import { spawn } from 'node:child_process';
 
+// Commands still running, so they can be stopped when Roadie exits rather than
+// finishing unseen afterwards.
+const running = new Set();
+export function stopRunningCommands() {
+  for (const child of running) { try { child.kill('SIGTERM'); } catch { /* gone */ } }
+}
+
 export function run(cmd, args = [], { cwd, env, input, timeout = 120_000 } = {}) {
   return new Promise((resolve) => {
     let stdout = '';
@@ -18,6 +25,9 @@ export function run(cmd, args = [], { cwd, env, input, timeout = 120_000 } = {})
     } catch (err) {
       return resolve({ code: 127, stdout: '', stderr: err.message, missing: true });
     }
+    running.add(child);
+    child.on('close', () => running.delete(child));
+    child.on('error', () => running.delete(child));
     const timer = setTimeout(() => {
       stderr += `\n${cmd} timed out after ${timeout} ms`;
       child.kill('SIGKILL');

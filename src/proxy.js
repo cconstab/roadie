@@ -64,8 +64,19 @@ function downPage(message) {
 export function createPreviewProxy({ getTarget }) {
   const clients = new Set();
 
+  const rightHost = (req) => {
+    const port = req.socket.localPort;
+    return [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host);
+  };
+
   const server = http.createServer((req, res) => {
     const pathname = req.url.split('?')[0];
+    // Only answer when addressed as this machine, so another website cannot
+    // point its own name here and read the unpublished site.
+    if (!rightHost(req)) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return res.end('Wrong host');
+    }
 
     if (pathname === '/__roadie/reload.js') {
       res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache' });
@@ -90,6 +101,11 @@ export function createPreviewProxy({ getTarget }) {
     // Ask for an uncompressed answer so HTML can have the reload tag added.
     const headers = { ...req.headers };
     delete headers['accept-encoding'];
+    // Roadie's own session cookie is for Roadie, not for the site being previewed.
+    if (headers.cookie) {
+      const kept = headers.cookie.split(';').map((c) => c.trim()).filter((c) => c && !c.startsWith('roadie_session='));
+      if (kept.length) headers.cookie = kept.join('; '); else delete headers.cookie;
+    }
 
     const upstream = http.request(
       { host: target.host, port: target.port, method: req.method, path: req.url, headers },
@@ -115,13 +131,15 @@ export function createPreviewProxy({ getTarget }) {
       },
     );
     upstream.on('error', () => down('The site is not answering. It may still be starting.'));
+    // If the browser goes away (a reload, a closed tab), let go of the site's side too.
+    res.on('close', () => upstream.destroy());
     req.pipe(upstream);
   });
 
   // WebSocket pass-through, for sites whose dev server uses one.
   server.on('upgrade', (req, socket, head) => {
     const target = getTarget();
-    if (!target) return socket.destroy();
+    if (!target || !rightHost(req)) return socket.destroy();
     const up = net.connect({ host: target.host, port: target.port }, () => {
       const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
       for (let i = 0; i < req.rawHeaders.length; i += 2) lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);

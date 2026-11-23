@@ -1,10 +1,10 @@
 // Runs the site: its own start command as a child process on a free port,
 // or the built-in static server when there is no start command.
-import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { roadieFiles, roadiePorts, spawnBoxed } from './sandbox.js';
 import { createStaticServer } from './static.js';
 
 // Every child process group Roadie has started and not yet seen exit.
@@ -85,7 +85,8 @@ export class Runner extends EventEmitter {
   runStep(command, dir) {
     return new Promise((resolve) => {
       this.log(`$ ${command}`);
-      const child = spawn(command, { cwd: dir, shell: true, detached: true, env: childEnv({ FORCE_COLOR: '0' }), stdio: ['ignore', 'pipe', 'pipe'] });
+      // Install scripts are site code: they get the internet, but no sign-in and no way out of the site folder.
+      const child = spawnBoxed(command, { cwd: dir, env: childEnv({ FORCE_COLOR: '0' }), mode: 'install', blockPorts: roadiePorts(), protect: roadieFiles() });
       live.add(child);
       this.pipeLogs(child);
       child.on('error', (err) => { live.delete(child); this.log(err.message); resolve(1); });
@@ -105,7 +106,7 @@ export class Runner extends EventEmitter {
     }
   }
 
-  async start({ dir, command, install, portHint }) {
+  async start({ dir, command, install, portHint, openNetwork = false }) {
     await this.stop();
     const generation = ++this.generation;
     this.setStatus({ state: 'starting', mode: command ? 'command' : 'static', host: null, port: null, error: null });
@@ -133,14 +134,14 @@ export class Runner extends EventEmitter {
     let port = this.lastPort && !(await listeningHost(this.lastPort)) ? this.lastPort : await freePort();
     const hintBusyBefore = portHint && portHint !== port ? !!(await listeningHost(portHint)) : true;
 
-    this.log(`$ ${command}   (PORT=${port} HOST=127.0.0.1)`);
-    const child = spawn(command, {
+    // The site's server is code the AI may have edited, so it runs in the box:
+    // no sign-in, no writing outside the site, and no internet unless the owner allows it.
+    const child = spawnBoxed(command, {
       cwd: dir,
-      shell: true,
-      detached: true, // its own process group, so the whole tree can be stopped
       env: childEnv({ PORT: String(port), HOST: '127.0.0.1', BROWSER: 'none', FORCE_COLOR: '0' }),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      mode: 'preview', openNetwork, blockPorts: roadiePorts(), protect: roadieFiles(),
     });
+    this.log(`$ ${command}   (PORT=${port} HOST=127.0.0.1${child.sandboxed ? `, sandboxed${openNetwork ? ' with internet' : ''}` : ', NOT sandboxed'})`);
     this.child = child;
     live.add(child);
     this.pipeLogs(child);

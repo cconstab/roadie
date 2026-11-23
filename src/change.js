@@ -121,9 +121,14 @@ export function changeView(f) {
     if (f.remoteEmpty) {
       stage = 'first-commit';
       note = 'GitHub has nothing for this repo yet. A repo needs one first commit on its main branch before changes can go through pull requests.';
-      next = f.filesChanged > 0
-        ? { id: 'first-commit', label: 'Make the first commit', enabled: true }
-        : { id: 'first-commit', label: 'Make the first commit', enabled: false, why: 'There are no files yet. Set up the starter site or add some files first.' };
+      if (f.localCommits) {
+        note = 'The first commit was made here but has not reached GitHub yet.';
+        next = { id: 'first-commit', label: 'Push the first commit', enabled: true };
+      } else {
+        next = f.filesChanged > 0
+          ? { id: 'first-commit', label: 'Make the first commit', enabled: true }
+          : { id: 'first-commit', label: 'Make the first commit', enabled: false, why: 'There are no files yet. Set up the starter site or add some files first.' };
+      }
       return finish();
     }
     if (f.branch !== f.defaultBranch) {
@@ -142,7 +147,11 @@ export function changeView(f) {
   const describeTests = () => {
     if (verdict === 'passed') set('tests', 'done', 'Passed for the files as they are now.');
     else if (verdict === 'failed') set('tests', 'failed', record.override && record.override.tree === f.treeId ? 'Failed. You chose to go ahead anyway.' : 'Failed.');
-    else if (verdict === 'stale') set('tests', 'current', record.tests ? 'Files changed since the last run.' : 'Not run yet.');
+    else if (verdict === 'stale') {
+      set('tests', 'current', !record.tests ? 'Not run yet.'
+        : record.tests.dirtied ? 'Files changed while the tests were running, so that run does not count. If the tests themselves write files into the site, add those files to .gitignore.'
+        : 'Files changed since the last run.');
+    }
   };
 
   // Before the pull request exists
@@ -186,14 +195,15 @@ export function changeView(f) {
     describeTests();
     set('pr', 'done', prLabel);
     const unpushed = record.pushedTree !== f.treeId;
+    also.push({ id: 'discard', label: 'Abandon this change' });
     if (unpushed) {
       set('pr', 'current', `${prLabel}, with newer edits here that are not in it yet.`);
       if (testsOk) {
         next = { id: 'update-pr', label: 'Update PR', enabled: true };
-        if (verdict !== 'none') also.push({ id: 'tests', label: 'Run tests again' });
+        if (verdict !== 'none') also.unshift({ id: 'tests', label: 'Run tests again' });
       } else {
         next = { id: 'tests', label: verdict === 'failed' ? 'Run tests again' : 'Run tests', enabled: true };
-        if (verdict === 'failed') also.push({ id: 'ask-ai', label: 'Ask the AI to fix it' }, { id: 'override', label: 'Update PR anyway…' });
+        if (verdict === 'failed') also.unshift({ id: 'ask-ai', label: 'Ask the AI to fix it' }, { id: 'override', label: 'Update PR anyway…' });
       }
       return finish();
     }
@@ -212,7 +222,7 @@ export function changeView(f) {
       set('ci', 'failed', `${checks.failing.length} failing: ${checks.failing.map((c) => c.name).join(', ')}`);
       note = 'A check failed on GitHub. Open its link to see why, fix it here (the AI can help), then update the PR.';
       next = { id: 'merge', label: 'Merge', enabled: false, why: 'Checks must pass before merging.' };
-      also.push({ id: 'ask-ai-ci', label: 'Ask the AI about it' });
+      also.unshift({ id: 'ask-ai-ci', label: 'Ask the AI about it' });
     } else {
       set('ci', 'done', checks.state === 'none' ? 'This repo has no checks.' : `All ${checks.total} checks passed.`);
       set('merge', 'current');
@@ -227,6 +237,12 @@ export function changeView(f) {
   set('ci', 'done');
   set('merge', 'done', record.merge && record.merge.sha ? short(record.merge.sha) : '');
   stage = 'merged';
+  if (!record.merge || !record.merge.sha) {
+    note = 'The pull request is merged. GitHub has not yet said which commit that made; Roadie is asking again.';
+    next = { id: 'refresh', label: 'Check again', enabled: true };
+    also.push({ id: 'finish', label: 'Finish without releasing' });
+    return finish();
+  }
   const stagingLive = record.staging && record.staging.live;
   const productionLive = record.production && record.production.live;
 

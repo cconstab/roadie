@@ -157,9 +157,12 @@ test('listing and searching skip ignored files and secrets', async (t) => {
   const found = await searchFiles({ gitops, dir: s.dir, query: 'hello' });
   assert.equal(found, 'index.html:1: <h1>Hello World</h1>\njs/app.js:1: const hello = 1;\njs/app.js:2: // HELLO again');
   assert.equal(await searchFiles({ gitops, dir: s.dir, query: 'hello', glob: '**/*.html' }), 'index.html:1: <h1>Hello World</h1>');
-  assert.equal(await searchFiles({ gitops, dir: s.dir, query: 'h.llo w', regex: true }), 'index.html:1: <h1>Hello World</h1>');
-  assert.equal(await searchFiles({ gitops, dir: s.dir, query: 'a.b(' }), 'No matches.');
-  assert.match(await searchFiles({ gitops, dir: s.dir, query: '(', regex: true }), /not a valid regular expression/);
+  // Plain text only: pattern characters mean themselves.
+  assert.equal(await searchFiles({ gitops, dir: s.dir, query: 'h.llo w' }), 'No matches.');
+  assert.equal(await searchFiles({ gitops, dir: s.dir, query: '(a+)+$' }), 'No matches.');
+  assert.equal(await searchFiles({ gitops, dir: s.dir, query: '<h1>hello' }), 'index.html:1: <h1>Hello World</h1>');
+  const tool = options.mcpServers.roadie.tools.find((x) => x.name === 'search_files');
+  assert.deepEqual(Object.keys(tool.schema), ['query', 'glob'], 'no regular-expression option');
 });
 
 test('globs match the way people expect', () => {
@@ -299,4 +302,64 @@ test('without a key the chat refuses to start and says how to fix it', (t) => {
   assert.throws(() => chat.send('hi'), /ANTHROPIC_API_KEY/);
   assert.equal(sdk.queries.length, 0);
   assert.equal(chat.items.length, 0);
+});
+
+test('.git cannot be reached by respelling it', (t) => {
+  const { dir } = site(t, { 'index.html': 'x', '.git/config': '[core]' });
+  // macOS and Windows treat all of these as the .git folder.
+  for (const p of ['.GIT/config', '.Git/hooks/pre-push', '.git./config', '.git /config', '.g​it/config', 'GIT~1/config', 'sub/../.GIT/config']) {
+    for (const tool of ['Read', 'Edit', 'Write']) {
+      assert.match(checkToolUse(dir, tool, { file_path: p }) || '', /\.git folder is off limits/, `${tool} ${JSON.stringify(p)}`);
+    }
+  }
+  for (const p of ['.ENV', '.Env.local', '.env.', 'ID_RSA', 'Server.PEM']) {
+    assert.match(checkToolUse(dir, 'Read', { file_path: p }) || '', /secrets file/, p);
+  }
+  // Names that merely resemble it are fine.
+  for (const p of ['.github/workflows/test.yml', '.gitignore', '.gitattributes', 'docs/git.md', 'gitlab.html']) {
+    assert.equal(checkToolUse(dir, 'Write', { file_path: p }), null, p);
+  }
+});
+
+test('search does not follow a link out of the site or to a secret', async (t) => {
+  const outside = tmpDir(t);
+  writeFiles(outside, { 'id_ed25519': 'PRIVATE KEY MATERIAL needle\n' });
+  const s = site(t, { 'index.html': 'needle in the page\n', '.env': 'TOKEN=needle\n' });
+  fs.symlinkSync(path.join(outside, 'id_ed25519'), path.join(s.dir, 'notes.txt'));
+  fs.symlinkSync(path.join(s.dir, '.env'), path.join(s.dir, 'settings.txt'));
+  fs.symlinkSync(outside, path.join(s.dir, 'vendor'));
+  const gitops = fakeGitOps({ listFiles: ['index.html', 'notes.txt', 'settings.txt', 'vendor/id_ed25519'] });
+  assert.equal(await searchFiles({ gitops, dir: s.dir, query: 'needle' }), 'index.html:1: needle in the page');
+});
+
+test('a message sent after the AI process has died goes to its replacement', async (t) => {
+  const s = site(t);
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  let started = 0;
+  const sdk = fakeSdk();
+  sdk.query = ({ prompt }) => {
+    const n = ++started;
+    const it = (async function* () {
+      for await (const turn of prompt) {
+        if (n === 1) throw new Error('process exited with code 1'); // the first process dies on its first message
+        yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: `process ${n} got: ${turn.message.content}` }] } };
+        yield { type: 'result', subtype: 'success' };
+      }
+    })();
+    it.interrupt = async () => {};
+    it.close = () => {};
+    return it;
+  };
+  const chat = createChat({ sdk, z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), emit: () => {} });
+  t.after(() => chat.close());
+  chat.send('first');
+  await settle();
+  assert.equal(chat.busy, false);
+  assert.match(chat.items.at(-1).text, /AI process stopped/);
+  chat.send('second');
+  await settle();
+  assert.equal(started, 2);
+  assert.equal(chat.items.at(-1).text, 'process 2 got: second');
+  assert.equal(chat.busy, false);
 });

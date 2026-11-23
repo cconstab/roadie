@@ -123,7 +123,7 @@ test('the starter is offered for a blank repo through the API, and only then', a
   t.after(() => app.close());
   const call = async (method, p, body) => {
     const res = await fetch(`http://127.0.0.1:${port}${p}`, {
-      method, headers: { 'X-Roadie-Token': app.token, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+      method, headers: { 'X-Roadie-Token': app.token, Cookie: app.cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, data: await res.json() };
   };

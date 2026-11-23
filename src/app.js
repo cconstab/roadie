@@ -15,6 +15,7 @@ import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
 import { blankKind, starterFileList, writeStarter } from './starter.js';
 import { runTests } from './tests.js';
+import { protectRoadie, sandboxAvailable } from './sandbox.js';
 import { needsRestart, watchSite } from './watcher.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -41,6 +42,12 @@ async function loadSdk() {
 
 export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {} }) {
   const token = crypto.randomBytes(24).toString('base64url'); // per run; proves a request came from Roadie's own page
+  // The page (and so the token) is only given to a browser that arrived with this
+  // key, which is in the link Roadie prints and opens at start. That browser gets a
+  // cookie; nothing else on the machine can ask for the page and read the token.
+  const launchKey = crypto.randomBytes(24).toString('base64url');
+  const COOKIE = 'roadie_session';
+  const hasSession = (req) => String(req.headers.cookie || '').split(';').some((c) => c.trim() === `${COOKIE}=${token}`);
   const runner = new Runner();
   const proxy = createPreviewProxy({
     getTarget: () => (runner.status.state === 'running' ? { host: runner.status.host, port: runner.status.port } : null),
@@ -52,6 +59,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
   let site = null; // { key, owner, repo, dir, branch, defaultBranch, note, settings, notes, saved }
   let watcher = null;
   let busy = null; // short text while a long step runs
+  let restarts = []; // times of recent automatic restarts
+  let restartsPaused = false;
   let chat = null; // the conversation with the AI about the open site
   let ai = config.getAi();
   const logs = [];
@@ -114,7 +123,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
   async function startPreview() {
     if (!site) throw new Error('Open a site first.');
     const { start, install, port: portHint } = site.settings;
-    await runner.start({ dir: site.dir, command: start, install, portHint });
+    await runner.start({ dir: site.dir, command: start, install, portHint, openNetwork: site.settings.previewInternet });
     proxy.reload();
   }
 
@@ -128,6 +137,16 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         flow.notify();
         const state = runner.status.state;
         if (runner.status.mode === 'command' && (state === 'running' || state === 'failed') && needsRestart(files)) {
+          // A site that writes into its own folder as it starts would restart itself for ever.
+          const nowMs = Date.now();
+          restarts = restarts.filter((t) => nowMs - t < 20_000);
+          if (restarts.length >= 4) {
+            if (!restartsPaused) runner.log(`The site keeps changing its own files (${files.join(', ')}), so Roadie has stopped restarting it automatically. Add those files to the site's .gitignore, or use Restart.`);
+            restartsPaused = true;
+            return proxy.reload();
+          }
+          restartsPaused = false;
+          restarts.push(nowMs);
           runner.log(`Changed: ${files.join(', ')}. Restarting the site.`);
           serial(startPreview).catch((err) => runner.log(err.message));
         } else {
@@ -149,8 +168,9 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       if (!status.ready) throw new Error(status.problem);
       const { sdk, z } = await agentSdk();
       const runAndRecord = async (options) => {
+        const started = await flow.beginTests();
         const result = await runTests(options);
-        await flow.recordTests(result).catch(() => {});
+        await flow.recordTests(started, result).catch(() => {});
         return result;
       };
       chat = createChat({ sdk, z, gitops, site, ai, runTests: runAndRecord, emit: (update) => send('chat', update) });
@@ -160,6 +180,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
   async function open(repoInput) {
     const { owner, repo, key } = parseRepo(repoInput);
+    if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish before opening another site.`);
+    if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before opening another site.');
     busy = `Opening ${key}…`;
     pushState();
     try {
@@ -264,6 +286,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     // --- the change bar ---
     'GET /api/change': async () => flow.view(),
     'POST /api/change/refresh': async () => flow.refresh(),
+    'POST /api/preview/restart-auto': async () => { restarts = []; restartsPaused = false; return snapshot(); },
     'POST /api/change/start': async (body) => { const v = await flow.start(body); pushState(); return v; },
     'POST /api/change/tests': async () => flow.tests(),
     // An outward step is shown first (prepare) and only then carried out (confirm).
@@ -331,6 +354,22 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
     const url = new URL(req.url, 'http://local');
 
+    // Arriving with the launch key earns the session cookie.
+    if (req.method === 'GET' && url.pathname === '/' && url.searchParams.has('key')) {
+      const given = Buffer.from(String(url.searchParams.get('key')));
+      const wanted = Buffer.from(launchKey);
+      if (given.length !== wanted.length || !crypto.timingSafeEqual(given, wanted)) return json(403, { error: 'That link is not valid for this run of Roadie.' });
+      res.writeHead(302, { Location: '/', 'Set-Cookie': `${COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/`, 'Cache-Control': 'no-store' });
+      return res.end();
+    }
+    if (!hasSession(req)) {
+      if (req.method === 'GET' && url.pathname === '/') {
+        res.writeHead(403, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end('<!doctype html><meta charset="utf-8"><title>Roadie</title><body style="font:16px/1.5 system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem"><h1 style="font-size:1.3rem">Open Roadie from its own link</h1><p>For safety, Roadie only opens from the link it prints in the terminal when it starts. Use that link, or stop Roadie and run <code>npm start</code> again.</p>');
+      }
+      return json(403, { error: 'This request did not come from the Roadie window. Open Roadie from the link it printed when it started.' });
+    }
+
     if (req.method === 'GET' && PUBLIC_FILES[url.pathname]) {
       const [name, type] = PUBLIC_FILES[url.pathname];
       let body = fs.readFileSync(path.join(PUBLIC_DIR, name));
@@ -370,6 +409,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
   return {
     token,
+    cookie: `${COOKIE}=${token}`,
+    launchKey,
     proxyPort,
     async listen(wanted) {
       const tryListen = (p) => new Promise((resolve, reject) => {
@@ -382,9 +423,19 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         await tryListen(0);
       }
       port = server.address().port;
+      // Site code (tests, the preview server, install scripts) is kept away from Roadie itself.
+      protectRoadie({ ports: [port, proxyPort], files: [config.file] });
       checks = await gitops.checkTools();
+      if (!sandboxAvailable()) {
+        checks.push({
+          id: 'sandbox', ok: false,
+          detail: 'This system has no sandbox for site code yet (Roadie has one on macOS only).',
+          fix: "Here a site's tests, its preview server and its install scripts run with your account's full access, including your GitHub sign-in. Read the AI's changes in the right-hand pane before running tests or the preview.",
+        });
+      }
       return port;
     },
+    address() { return server.address(); },
     async close() {
       clearInterval(ping);
       flow.stop();

@@ -19,7 +19,7 @@ const SITE_FILES = {
   'check.sh': '#!/bin/sh\nif [ -f BROKEN ]; then echo "1 test failed: BROKEN exists"; exit 1; fi\necho "all tests passed"\n',
 };
 
-function setup(t, { files = SITE_FILES, settings = {}, health } = {}) {
+function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15 } = {}) {
   const root = tmpDir(t);
   const remote = createRemote(root, files);
   const dir = remote.clone(path.join(root, 'sites', 'acme', 'site'));
@@ -39,11 +39,12 @@ function setup(t, { files = SITE_FILES, settings = {}, health } = {}) {
     draftPr: async ({ description }) => ({ title: `AI: ${description}`, body: '- drafted by the AI' }),
     fetchImpl: async (url) => {
       web.hits.push(url);
+      if (web.wait) await web.wait;
       const body = url.startsWith('https://staging.') ? web.staging : web.production;
       if (body instanceof Error) throw body;
       return { ok: true, status: 200, text: async () => body };
     },
-    pollMs: 15,
+    pollMs,
   });
   t.after(() => flow.stop());
   const edit = (name, content) => writeFiles(dir, { [name]: content });
@@ -479,7 +480,11 @@ test('a test run the AI asked for counts, but only for the files as they were th
   await flow.start({ description: 'AI ran it' });
   edit('index.html', '<h1>ai</h1>\n');
   // What the AI's run_tests tool does: the same runner, then tell the change bar.
-  await flow.recordTests(await runTests({ dir, command: 'sh check.sh' }));
+  const aiRun = async () => {
+    const started = await flow.beginTests();
+    await flow.recordTests(started, await runTests({ dir, command: 'sh check.sh' }));
+  };
+  await aiRun();
   let v = await flow.view();
   assert.equal(v.next.id, 'pr');
   assert.equal(config.getChange('acme/site').tests.by, 'ai');
@@ -490,7 +495,7 @@ test('a test run the AI asked for counts, but only for the files as they were th
   assert.equal(v.next.id, 'tests');
 
   edit('BROKEN', 'x\n');
-  await flow.recordTests(await runTests({ dir, command: 'sh check.sh' }));
+  await aiRun();
   v = await flow.view();
   assert.equal(v.steps.find((s) => s.id === 'tests').status, 'failed');
   await assert.rejects(flow.prepare('pr'), /tests are failing/);
@@ -532,4 +537,106 @@ test('when GitHub refuses a push, the reason and the fix are spelled out', async
   const hostKey = await refuse('Host key verification failed.\nfatal: Could not read from remote repository.')
     .push('/tmp', 'change/x', { defaultBranch: 'main' }).catch((e) => e);
   assert.match(hostKey.message, /ssh -T git@github\.com/);
+});
+
+test('if the first push fails, it can be tried again without getting stuck', async (t) => {
+  const { remote, flow, edit, github } = setup(t, { files: null });
+  edit('index.html', '<h1>new</h1>\n');
+  const shown = await flow.prepare('first-commit');
+  // The network drops just as the push starts: the commit is made, the push is not.
+  github.state.failGitPush = true;
+  await assert.rejects(flow.confirm(shown.token, 'first-commit'), /Pushing main failed/);
+  assert.deepEqual(remote.branches(), []);
+  github.state.failGitPush = false;
+  let v = await flow.view();
+  assert.equal(v.stage, 'first-commit');
+  assert.equal(v.next.label, 'Push the first commit');
+  assert.equal(v.next.enabled, true);
+  const retry = await flow.prepare('first-commit');
+  assert.deepEqual(retry.plan.commands, ['git push origin main']);
+  v = await flow.confirm(retry.token, 'first-commit');
+  assert.deepEqual(remote.branches(), ['main']);
+  assert.equal(v.next.id, 'start');
+});
+
+test('edits that land while the tests are running are not counted as tested', async (t) => {
+  const { flow, edit } = setup(t, { settings: { test: 'sleep 0.4; sh check.sh' } });
+  await flow.start({ description: 'Mid-run' });
+  edit('index.html', '<h1>before the run</h1>\n');
+  const running = flow.tests();
+  await new Promise((r) => setTimeout(r, 150));
+  edit('index.html', '<h1>changed during the run</h1>\n'); // the AI is still writing
+  assert.equal((await running).passed, true);
+  const v = await flow.view();
+  assert.equal(v.next.id, 'tests', 'the pass does not open the pull request');
+  assert.match(v.steps.find((s) => s.id === 'tests').detail, /changed while the tests were running/);
+  await assert.rejects(flow.prepare('pr'), /Run the tests first/);
+});
+
+test('a health check that answers after the change is finished does not bring it back', async (t) => {
+  const { flow, edit, go, config, web } = setup(t);
+  await flow.start({ description: 'Late answer' });
+  edit('index.html', '<h1>l</h1>\n');
+  await flow.tests();
+  await go('pr');
+  await go('merge');
+  let release;
+  const slow = new Promise((resolve) => { release = resolve; });
+  web.wait = slow; // the health URL takes its time to answer
+  flow.health('staging');
+  await new Promise((r) => setTimeout(r, 40));
+  await flow.finish();
+  assert.equal(config.getChange('acme/site'), null);
+  release();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(config.getChange('acme/site'), null, 'still finished');
+  assert.equal((await flow.view()).next.id, 'start');
+});
+
+test('a merge is recorded even when GitHub is slow to say which commit it made', async (t) => {
+  const { flow, edit, go, github, remote } = setup(t, { pollMs: 5 });
+  await flow.start({ description: 'Slow github' });
+  edit('index.html', '<h1>s</h1>\n');
+  await flow.tests();
+  await go('pr');
+  // After the merge, GitHub cannot be reached for a while.
+  const shown = await flow.prepare('merge');
+  github.state.failAll = /^pr view/;
+  let v = await flow.confirm(shown.token, 'merge');
+  assert.equal(remote.log('main')[0], `${github.state.prs[0].title} (#1)`, 'the merge really happened');
+  assert.equal(v.merge.sha, null);
+  assert.equal(v.stage, 'merged');
+  assert.equal(v.next.id, 'refresh');
+  assert.throws(() => flow.health('staging'), /not yet said which commit/);
+  await assert.rejects(flow.prepare('release'), /not yet said which commit/);
+  github.state.failAll = null;
+  v = await flow.refresh();
+  assert.equal(v.merge.sha, remote.sha('main'));
+  assert.equal(v.next.id, 'staging');
+});
+
+test('checks are read again at the moment of merging', async (t) => {
+  const { flow, edit, go, github, remote } = setup(t);
+  await flow.start({ description: 'Late red' });
+  edit('index.html', '<h1>r</h1>\n');
+  await flow.tests();
+  await go('pr');
+  const before = remote.sha('main');
+  const shown = await flow.prepare('merge'); // green when shown
+  github.state.checks = () => [{ name: 'npm test', bucket: 'fail', state: 'FAILURE', link: 'l' }];
+  await assert.rejects(flow.confirm(shown.token, 'merge'), /now failing \(npm test\), so Roadie did not merge/);
+  assert.equal(remote.sha('main'), before);
+});
+
+test('a change with an open pull request can still be abandoned, from any branch', async (t) => {
+  const { flow, edit, go, dir, config } = setup(t);
+  await flow.start({ description: 'Abandon me' });
+  edit('index.html', '<h1>a</h1>\n');
+  await flow.tests();
+  const { view: v } = await go('pr');
+  assert.ok(v.also.some((a) => a.id === 'discard'));
+  execFileSync('git', ['switch', '-q', 'main'], { cwd: dir }); // the person wandered off in a terminal
+  const { plan } = await go('discard');
+  assert.match(plan.summary, /Pull request #1 stays open on GitHub/);
+  assert.equal(config.getChange('acme/site'), null);
 });

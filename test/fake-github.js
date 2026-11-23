@@ -62,7 +62,9 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
     checks: () => [{ name: 'npm test', state: 'SUCCESS', bucket: 'pass', link: `https://github.com/${slug}/actions/runs/1`, workflow: 'tests' }],
     repo: { squashMergeAllowed: true, mergeCommitAllowed: true, rebaseMergeAllowed: true },
     scopes: ['gist', 'read:org', 'repo', 'workflow'],
-    failNext: null,       // set to { match: /regex/, stderr: '...' } to make one gh command fail
+    failNext: null,
+    failAll: null,        // a regex: every matching gh command fails until this is cleared
+    failGitPush: false,   // true: git push fails as if the network were down       // set to { match: /regex/, stderr: '...' } to make one gh command fail
   };
   const ok = (stdout = '') => ({ code: 0, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '', missing: false });
   const bad = (stderr, code = 1) => ({ code, stdout: '', stderr, missing: false });
@@ -77,6 +79,7 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
 
   function gh(args) {
     state.calls.push(args.join(' '));
+    if (state.failAll && state.failAll.test(args.join(' '))) return bad('error connecting to api.github.com');
     if (state.failNext && state.failNext.match.test(args.join(' '))) {
       const { stderr } = state.failNext;
       state.failNext = null;
@@ -160,6 +163,7 @@ export function fakeGitHub(remote, { slug = 'acme/site' } = {}) {
   const run = async (cmd, args, opts) => {
     if (cmd === 'gh') return gh(args);
     if (cmd === 'git') state.gitCalls.push(args.join(' '));
+    if (cmd === 'git' && state.failGitPush && args.includes('push')) return bad('fatal: unable to access remote: Could not resolve host: github.com', 128);
     return realRun(cmd, args, opts);
   };
   return { run, state };

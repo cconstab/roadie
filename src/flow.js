@@ -22,19 +22,6 @@ function fail(message, data) {
   return err;
 }
 
-// Added lines from unified diffs, for scanning before anything is staged.
-export function additionsFromChanges(changes) {
-  const out = [];
-  for (const change of changes) {
-    let inHunk = false;
-    for (const line of (change.diff || '').split('\n')) {
-      if (line.startsWith('@@')) inHunk = true;
-      else if (inHunk && line.startsWith('+')) out.push({ path: change.path, line: line.slice(1) });
-    }
-  }
-  return out;
-}
-
 function secretsMessage(findings) {
   return 'Roadie stopped because something here looks like a secret. Nothing was committed or sent.\n'
     + findings.map((f) => `- ${f.path}: ${f.why}`).join('\n')
@@ -51,6 +38,7 @@ export function createFlow({
   let busy = null;       // short text while a step runs
   let ciTimer = null;
   const healthTimers = {};
+  const healthRun = { staging: 0, production: 0 }; // bumped whenever a watch is started or stopped
   let testOutput = '';
 
   const site = () => {
@@ -76,6 +64,7 @@ export function createFlow({
     clearInterval(ciTimer);
     ciTimer = null;
     for (const which of Object.keys(healthTimers)) { clearInterval(healthTimers[which]); delete healthTimers[which]; }
+    for (const which of Object.keys(healthRun)) healthRun[which]++;
   }
 
   async function facts() {
@@ -84,19 +73,27 @@ export function createFlow({
     const r = record();
     const branch = await gitops.currentBranch(s.dir);
     const hasCommits = await gitops.hasCommits(s.dir);
-    if (remote.remoteEmpty === undefined) {
-      // A local clone with commits means GitHub has them too, so only ask when there are none.
-      remote.remoteEmpty = hasCommits ? false : await gitops.remoteIsEmpty(s.dir).catch(() => false);
+    if (remote.remoteEmpty === undefined || remote.remoteEmpty) {
+      // If the clone has ever seen the main branch on GitHub, GitHub is not empty. Otherwise ask.
+      const seen = await gitops.remoteSha(s.dir, s.defaultBranch);
+      remote.remoteEmpty = seen ? false : await gitops.remoteIsEmpty(s.dir).catch(() => false);
     }
     const changes = await gitops.changes(s.dir, (r && r.base) || 'HEAD');
     return {
       site: s, record: r, branch, hasCommits, changes,
       defaultBranch: s.defaultBranch,
-      remoteEmpty: remote.remoteEmpty && !hasCommits,
+      remoteEmpty: remote.remoteEmpty,
+      localCommits: hasCommits,
       filesChanged: changes.length,
       treeId: await gitops.treeId(s.dir),
       hasTestCommand: !!s.settings.test,
-      pr: r && r.pr ? (remote.pr || { number: r.pr.number, url: r.pr.url, state: r.merge ? 'MERGED' : 'OPEN', mergeable: 'UNKNOWN' }) : null,
+      // What Roadie itself did is the last word: once it has merged, the pull
+      // request is merged, even if an older answer from GitHub is still cached.
+      pr: r && r.pr ? {
+        number: r.pr.number, url: r.pr.url, mergeable: 'UNKNOWN',
+        ...(remote.pr || {}),
+        state: r.merge ? 'MERGED' : ((remote.pr && remote.pr.state) || 'OPEN'),
+      } : null,
       checks: remote.checks ? summarizeChecks(remote.checks) : (r && r.pr && !r.merge ? { state: 'unknown' } : null),
       settings: s.settings,
     };
@@ -156,9 +153,10 @@ export function createFlow({
       remote.pr = await gitops.prView(s.key, r.pr.number);
       remote.checks = remote.pr.state === 'OPEN' ? await gitops.prChecks(s.key, r.pr.number) : (remote.checks || []);
       remote.error = null;
-      if (remote.pr.state === 'MERGED' && !r.merge) {
-        // Merged on GitHub rather than from here: pick that up.
-        save({ ...r, merge: { sha: remote.pr.mergeCommit && remote.pr.mergeCommit.oid, at: now() } });
+      const mergedSha = remote.pr.mergeCommit && remote.pr.mergeCommit.oid;
+      if (remote.pr.state === 'MERGED' && (!r.merge || (!r.merge.sha && mergedSha))) {
+        // Merged on GitHub rather than from here, or the commit was not known a moment ago: pick that up.
+        save({ ...r, merge: { sha: mergedSha || null, at: (r.merge && r.merge.at) || now() } });
       }
     } catch (err) {
       remote.error = err.message;
@@ -202,38 +200,43 @@ export function createFlow({
   async function tests() {
     return step('Running the tests…', async () => {
       const s = site();
+      const key = s.key;
+      const before = await gitops.treeId(s.dir);
       testOutput = '';
       const result = await runTests({
         dir: s.dir, command: s.settings.test,
         onOutput: (chunk) => { testOutput = (testOutput + chunk).slice(-60_000); emit({ testChunk: chunk }); },
       });
       testOutput = result.output;
-      const r = record();
-      if (r) {
-        save({
-          ...r,
-          override: null,
-          tests: { passed: result.passed, code: result.code, tree: await gitops.treeId(s.dir), at: now(), sandboxed: result.sandboxed },
-        });
-      }
+      await creditTests(key, s.dir, before, result);
       return { passed: result.passed, code: result.code, output: result.output, sandboxed: result.sandboxed, timedOut: result.timedOut };
     });
   }
 
-  // Record a run of the site's test command that happened outside the button
-  // (the AI's run_tests tool uses the very same runner).
-  async function recordTests(result) {
+  // A result counts for the site it ran on and the files as they were when it
+  // started. If files changed during the run, it counts for nothing current.
+  async function creditTests(key, dir, treeBefore, result, by) {
+    const r = config.getChange(key);
+    if (!r || result.code === null) return;
+    const after = await gitops.treeId(dir);
+    config.saveChange(key, {
+      ...r,
+      override: null,
+      tests: { passed: result.passed, code: result.code, tree: treeBefore, dirtied: after !== treeBefore, at: now(), sandboxed: result.sandboxed, ...(by ? { by } : {}) },
+    });
+  }
+
+  // For a run of the site's test command that happens outside the button (the
+  // AI's run_tests tool uses the very same runner): call begin() before the run
+  // and pass what it returns, with the result, to recordTests().
+  async function beginTests() {
+    const s = site();
+    return { key: s.key, dir: s.dir, tree: await gitops.treeId(s.dir) };
+  }
+  async function recordTests(started, result) {
+    await creditTests(started.key, started.dir, started.tree, result, 'ai');
     const s = getSite();
-    if (!s) return;
-    testOutput = result.output || '';
-    const r = config.getChange(s.key);
-    if (r && result.code !== null) {
-      config.saveChange(s.key, {
-        ...r,
-        override: null,
-        tests: { passed: result.passed, code: result.code, tree: await gitops.treeId(s.dir), at: now(), sandboxed: result.sandboxed, by: 'ai' },
-      });
-    }
+    if (s && s.key === started.key) testOutput = result.output || '';
     notify();
   }
 
@@ -269,8 +272,11 @@ export function createFlow({
   }
   const joinWarnings = (...parts) => parts.filter(Boolean).join('\n\n') || null;
 
-  function checkSecrets(changes) {
-    const findings = scanForSecrets({ files: changes.filter((c) => c.status !== 'deleted').map((c) => c.path), additions: additionsFromChanges(changes) });
+  async function checkSecrets(dir, base, changes) {
+    const findings = scanForSecrets({
+      files: changes.filter((c) => c.status !== 'deleted').map((c) => c.path),
+      additions: await gitops.additions(dir, base),
+    });
     if (findings.length) throw fail(secretsMessage(findings), { findings });
   }
 
@@ -282,10 +288,21 @@ export function createFlow({
 
     if (action === 'first-commit') {
       if (r) throw fail('A change is in progress.');
-      if (f.hasCommits) throw fail('This repo already has commits.');
       if (!(await gitops.remoteIsEmpty(s.dir))) throw fail(`GitHub already has commits for ${s.key}. Open the site again to pick them up.`);
+      if (f.branch !== f.defaultBranch) throw fail(`The clone is on ${f.branch}. The first commit has to be made on ${f.defaultBranch}.`);
+      if (f.hasCommits) {
+        // The commit was made earlier but the push did not get through: just push.
+        return confirmations.prepare(action, {
+          title: `Push the first commit to ${f.defaultBranch}`,
+          summary: `The first commit is already made on this machine but has not reached GitHub. This pushes it to ${f.defaultBranch}. It is the only time Roadie pushes to ${f.defaultBranch}: every later change goes through a pull request.`
+            + (f.filesChanged ? ` Your ${f.filesChanged} newer uncommitted file${f.filesChanged === 1 ? '' : 's'} stay here, for your first change.` : ''),
+          commands: [`git push origin ${f.defaultBranch}`],
+          files: [], pushOnly: true, fingerprint,
+          sends: `the first commit to github.com/${s.key} (branch ${f.defaultBranch})`,
+        });
+      }
       if (!f.filesChanged) throw fail('There are no files to commit yet.');
-      checkSecrets(f.changes);
+      await checkSecrets(s.dir, 'HEAD', f.changes);
       const message = String(input.message || 'First commit').trim().slice(0, 200) || 'First commit';
       return confirmations.prepare(action, {
         title: `Make the first commit to ${f.defaultBranch}`,
@@ -299,8 +316,8 @@ export function createFlow({
     }
 
     if (!r) throw fail('Start a change first.');
-    if (f.branch !== r.branch) throw fail(`The clone is on ${f.branch}, not this change's branch ${r.branch}. Switch back before continuing.`);
-    if (f.branch === f.defaultBranch) throw fail(`Roadie never commits to ${f.defaultBranch} directly.`);
+    if (action !== 'discard' && f.branch !== r.branch) throw fail(`The clone is on ${f.branch}, not this change's branch ${r.branch}. Switch back before continuing.`);
+    if (action !== 'discard' && f.branch === f.defaultBranch) throw fail(`Roadie never commits to ${f.defaultBranch} directly.`);
 
     if (action === 'pr' || action === 'update-pr') {
       if (action === 'pr' && r.pr) throw fail('This change already has a pull request.');
@@ -313,7 +330,7 @@ export function createFlow({
           ? 'The tests are failing, so Roadie will not send this. Fix them, or choose to go ahead anyway.'
           : 'Run the tests first: the files have changed since they last ran.');
       }
-      checkSecrets(f.changes);
+      await checkSecrets(s.dir, r.base || 'HEAD', f.changes);
       const uncommitted = (await gitops.changes(s.dir, 'HEAD')).length;
       let title = String(input.title || '').trim();
       let body = String(input.body || '');
@@ -381,7 +398,8 @@ export function createFlow({
     }
 
     if (action === 'release') {
-      if (!r.merge || !r.merge.sha) throw fail('Merge the pull request first.');
+      if (!r.merge) throw fail('Merge the pull request first.');
+      if (!r.merge.sha) throw fail('GitHub has not yet said which commit the merge made. Choose Check again in a moment.');
       if (r.release) throw fail(`This change was already released as ${r.release.tag}.`);
       await gitops.fetch(s.dir);
       const published = await gitops.releases(s.key);
@@ -454,7 +472,7 @@ export function createFlow({
       };
 
       if (action === 'first-commit') {
-        await commitStaged(plan.message, { defaultBranch: f.defaultBranch, firstCommit: true });
+        if (!plan.pushOnly) await commitStaged(plan.message, { defaultBranch: f.defaultBranch, firstCommit: true });
         await gitops.push(s.dir, f.defaultBranch, { defaultBranch: f.defaultBranch, firstCommit: true });
         remote.remoteEmpty = false;
         return view();
@@ -486,10 +504,18 @@ export function createFlow({
       }
 
       if (action === 'merge') {
+        // The checks may have changed while the confirmation was on screen.
+        const latest = summarizeChecks(await gitops.prChecks(s.key, plan.number));
+        if (latest.state === 'pending') throw fail('Checks started running again, so Roadie did not merge. Wait for them to finish.');
+        if (latest.state === 'fail') throw fail(`A check is now failing (${latest.failing.map((c) => c.name).join(', ')}), so Roadie did not merge.`);
         await gitops.prMerge(s.key, plan.number, { method: plan.method, sha: plan.sha, deleteBranch: true });
-        await refreshRemote();
-        const sha = remote.pr && remote.pr.mergeCommit ? remote.pr.mergeCommit.oid : null;
-        save({ ...record(), merge: { sha, at: now() } });
+        // It is merged from this point on, whatever happens next: record that first.
+        save({ ...record(), merge: { sha: null, at: now() } });
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await refreshRemote(); // fills in the merged commit as soon as GitHub reports it
+          if (record().merge.sha) break;
+          await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, 1500)));
+        }
         clearInterval(ciTimer);
         ciTimer = null;
         await gitops.fetch(s.dir).catch(() => {});
@@ -529,6 +555,7 @@ export function createFlow({
     if (which !== 'staging' && which !== 'production') throw fail('Unknown site to check.');
     clearInterval(healthTimers[which]);
     delete healthTimers[which];
+    const run = ++healthRun[which];
     if (stop) {
       if (r && r[which]) save({ ...r, [which]: { ...r[which], polling: false } });
       notify();
@@ -536,6 +563,7 @@ export function createFlow({
     }
     const base = which === 'staging' ? s.settings.stagingUrl : s.settings.productionUrl;
     if (!base || !s.settings.healthPath) throw fail(`Set the ${which} URL and health-check path in Site settings first.`);
+    if (which === 'staging' && r && r.merge && !r.merge.sha) throw fail('GitHub has not yet said which commit the merge made. Choose Check again in a moment.');
     const needle = which === 'staging' ? short(r && r.merge && r.merge.sha) : r && r.release && r.release.tag;
     if (!needle) throw fail(which === 'staging' ? 'Merge the pull request first.' : 'Publish the release first.');
     const url = base + s.settings.healthPath;
@@ -559,8 +587,11 @@ export function createFlow({
       }
       const timedOut = !live && now() - started > healthTimeoutMs;
       if (live || timedOut) { clearInterval(healthTimers[which]); delete healthTimers[which]; }
+      const latest = config.getChange(key);
+      // The watch may have been stopped, or the change finished or abandoned, while this check was in the air.
+      if (run !== healthRun[which] || !latest || !latest[which] || latest[which].waitingFor !== needle) return;
       config.saveChange(key, {
-        ...config.getChange(key),
+        ...latest,
         [which]: { url, waitingFor: needle, seen, error, live, polling: !live && !timedOut, timedOut, checkedAt: now() },
       });
       notify();
@@ -605,5 +636,9 @@ export function createFlow({
     return (r && r.base) || 'HEAD';
   }
 
-  return { view, notify, start, tests, recordTests, prepare, confirm, health, finish, refresh, aiRequest, base, stop: stopPolling };
+  return {
+    view, notify, start, tests, beginTests, recordTests, prepare, confirm, health, finish, refresh, aiRequest, base,
+    stop: stopPolling,
+    get busy() { return busy; },
+  };
 }

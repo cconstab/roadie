@@ -7,7 +7,7 @@ export function roadieHome() {
   return process.env.ROADIE_HOME || path.join(os.homedir(), 'roadie');
 }
 
-export const SETTING_KEYS = ['start', 'test', 'install', 'port', 'stagingUrl', 'productionUrl', 'healthPath', 'mergeMethod'];
+export const SETTING_KEYS = ['start', 'test', 'install', 'port', 'stagingUrl', 'productionUrl', 'healthPath', 'mergeMethod', 'previewInternet'];
 export const MERGE_METHODS = ['squash', 'merge', 'rebase'];
 
 // Keep only known keys, as trimmed strings (port as a number or null).
@@ -17,6 +17,8 @@ export function cleanSettings(input = {}) {
     if (key === 'port') {
       const n = Number(input.port);
       out.port = Number.isInteger(n) && n > 0 && n < 65536 ? n : null;
+    } else if (key === 'previewInternet') {
+      out.previewInternet = input.previewInternet === true || input.previewInternet === 'on' || input.previewInternet === 'true';
     } else if (key === 'mergeMethod') {
       out.mergeMethod = MERGE_METHODS.includes(input.mergeMethod) ? input.mergeMethod : 'squash';
     } else {

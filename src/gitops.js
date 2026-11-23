@@ -4,6 +4,23 @@ import os from 'node:os';
 import path from 'node:path';
 import { run as realRun } from './exec.js';
 
+const SCAN_DIFF = ['--text', '--no-textconv', '--no-color', '--no-ext-diff', '-U0'];
+
+// Added lines from a unified diff. Only lines inside a hunk count, so an added
+// line that itself starts with "++" is not mistaken for a file header.
+export function parseAdditions(diff) {
+  const out = [];
+  let file = null;
+  let inHunk = false;
+  for (const line of String(diff).split('\n')) {
+    if (line.startsWith('diff --git ')) { inHunk = false; file = null; }
+    else if (!inHunk && line.startsWith('+++ ')) file = line.slice(4).replace(/^"?b\//, '').replace(/"$/, '');
+    else if (line.startsWith('@@')) inHunk = true;
+    else if (inHunk && line.startsWith('+') && file && file !== '/dev/null') out.push({ path: file, line: line.slice(1) });
+  }
+  return out;
+}
+
 export const WORKFLOW_FIX = 'In a terminal run "gh auth refresh -h github.com -s workflow", follow its instructions, then try again.';
 
 export function createGitOps({ run = realRun } = {}) {
@@ -12,7 +29,9 @@ export function createGitOps({ run = realRun } = {}) {
   const baseEnv = env;
   // Hooks in a site's clone are never run: Roadie's git commands must do exactly
   // what the interface says and nothing more.
-  const git = (cwd, args, opts = {}) => run('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, env: env(), ...opts });
+  // Nor a file-system-monitor program named in a clone's config.
+  const SAFE = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+  const git = (cwd, args, opts = {}) => run('git', [...SAFE, ...args], { cwd, env: env(), ...opts });
   const gh = (cwd, args, opts = {}) => run('gh', args, { cwd, env: env(), ...opts });
 
   // Git commands that talk to GitHub over HTTPS sign in through gh, for this one
@@ -197,9 +216,9 @@ export function createGitOps({ run = realRun } = {}) {
       const index = path.join(os.tmpdir(), `roadie-index-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const env = { ...baseEnv(), GIT_INDEX_FILE: index };
       try {
-        const add = await run('git', ['-c', 'core.hooksPath=/dev/null', 'add', '-A', '--', '.'], { cwd: dir, env });
+        const add = await run('git', [...SAFE, 'add', '-A', '--', '.'], { cwd: dir, env });
         if (add.code !== 0) throw new Error(`Reading the working tree failed: ${add.stderr.trim()}`);
-        const tree = await run('git', ['write-tree'], { cwd: dir, env });
+        const tree = await run('git', [...SAFE, 'write-tree'], { cwd: dir, env });
         if (tree.code !== 0) throw new Error(`Reading the working tree failed: ${tree.stderr.trim()}`);
         return tree.stdout.trim();
       } finally {
@@ -247,13 +266,24 @@ export function createGitOps({ run = realRun } = {}) {
     },
 
     // Lines a commit would add, for the secret scan: [{ path, line }].
+    // --text and --no-textconv make git show every file's real content, whatever
+    // the repo's .gitattributes says about binary files or converters.
     async stagedAdditions(dir) {
-      const r = await git(dir, ['diff', '--cached', '--no-color', '--no-ext-diff', '-U0']);
+      const r = await git(dir, ['-c', 'core.quotePath=false', 'diff', '--cached', ...SCAN_DIFF]);
+      return parseAdditions(r.stdout);
+    },
+
+    // The same, for everything that differs from a commit and is not staged yet.
+    async additions(dir, base = 'HEAD') {
       const out = [];
-      let file = null;
-      for (const line of r.stdout.split('\n')) {
-        if (line.startsWith('+++ ')) file = line.slice(4).replace(/^b\//, '');
-        else if (line.startsWith('+') && !line.startsWith('+++') && file && file !== '/dev/null') out.push({ path: file, line: line.slice(1) });
+      if (await this.hasCommits(dir)) {
+        const r = await git(dir, ['-c', 'core.quotePath=false', 'diff', ...SCAN_DIFF, base, '--']);
+        out.push(...parseAdditions(r.stdout));
+      }
+      const untracked = await git(dir, ['ls-files', '-z', '--others', '--exclude-standard']);
+      for (const file of untracked.stdout.split('\0').filter(Boolean)) {
+        const r = await git(dir, ['-c', 'core.quotePath=false', 'diff', ...SCAN_DIFF, '--no-index', '--', '/dev/null', file]);
+        out.push(...parseAdditions(r.stdout).map((a) => ({ ...a, path: file })));
       }
       return out;
     },

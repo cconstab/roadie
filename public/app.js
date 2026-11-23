@@ -344,7 +344,9 @@ function showSettings() {
   if (!site) return;
   const form = $('settings-form');
   for (const [key, value] of Object.entries(site.settings)) {
-    if (form.elements[key]) form.elements[key].value = value ?? '';
+    const control = form.elements[key];
+    if (!control) continue;
+    if (control.type === 'checkbox') control.checked = !!value; else control.value = value ?? '';
   }
   for (const small of form.querySelectorAll('[data-note]')) {
     small.textContent = site.notes[small.dataset.note] || '';
@@ -756,6 +758,7 @@ async function changeAction(id) {
     return working('Stopping…', async () => setChange(await api('POST', '/api/change/health', { which: id.replace('-stop', ''), stop: true })));
   }
   if (id === 'finish') return working('Finishing…', async () => setChange(await api('POST', '/api/change/finish')));
+  if (id === 'refresh') return working('Checking…', async () => setChange(await api('POST', '/api/change/refresh')));
 }
 
 $('next-btn').addEventListener('click', () => changeAction($('next-btn').dataset.action));
