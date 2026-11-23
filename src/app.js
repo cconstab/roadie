@@ -4,11 +4,14 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cleanSettings } from './config.js';
+import { aiStatus, createChat } from './agent.js';
+import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
+import { isSecretPath } from './guards.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
+import { runTests } from './tests.js';
 import { needsRestart, watchSite } from './watcher.js';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
@@ -18,8 +21,15 @@ const PUBLIC_FILES = {
   '/app.js': ['app.js', 'text/javascript; charset=utf-8'],
 };
 const MAX_LOG_LINES = 500;
+const MAX_DIFF_CHARS = 200_000;
 
-export async function createApp({ home, gitops, config }) {
+// The Agent SDK is loaded on first use, so Roadie starts quickly and tests can pass a fake.
+async function loadSdk() {
+  const [sdk, { z }] = await Promise.all([import('@anthropic-ai/claude-agent-sdk'), import('zod')]);
+  return { sdk, z };
+}
+
+export async function createApp({ home, gitops, config, agentSdk = loadSdk }) {
   const token = crypto.randomBytes(24).toString('base64url'); // per run; proves a request came from Roadie's own page
   const runner = new Runner();
   const proxy = createPreviewProxy({
@@ -32,6 +42,8 @@ export async function createApp({ home, gitops, config }) {
   let site = null; // { key, owner, repo, dir, branch, defaultBranch, note, settings, notes, saved }
   let watcher = null;
   let busy = null; // short text while a long step runs
+  let chat = null; // the conversation with the AI about the open site
+  let ai = config.getAi();
   const logs = [];
   const clients = new Set();
 
@@ -47,6 +59,8 @@ export async function createApp({ home, gitops, config }) {
       checks,
       busy,
       site: site && { ...site },
+      ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
+      chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null },
       preview: {
         state: s.state,
         mode: s.mode,
@@ -98,12 +112,18 @@ export async function createApp({ home, gitops, config }) {
     });
   }
 
+  function endChat() {
+    chat?.close();
+    chat = null;
+  }
+
   async function open(repoInput) {
     const { owner, repo, key } = parseRepo(repoInput);
     busy = `Opening ${key}…`;
     pushState();
     try {
       await serial(() => runner.stop());
+      endChat();
       watcher?.close();
       watcher = null;
       logs.length = 0;
@@ -140,6 +160,49 @@ export async function createApp({ home, gitops, config }) {
     },
     'POST /api/preview/start': async () => { await serial(startPreview); return snapshot(); },
     'POST /api/preview/stop': async () => { await serial(() => runner.stop()); return snapshot(); },
+
+    'POST /api/chat/send': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (!chat) {
+        const status = aiStatus(ai);
+        if (!status.ready) throw new Error(status.problem);
+        const { sdk, z } = await agentSdk();
+        chat = createChat({ sdk, z, gitops, site, ai, runTests, emit: (update) => send('chat', update) });
+      }
+      chat.send(body.text);
+      return { ok: true };
+    },
+    'POST /api/chat/stop': async () => { await chat?.stop(); return { ok: true }; },
+    'POST /api/chat/new': async () => { endChat(); pushState(); return snapshot(); },
+
+    'GET /api/changes': async () => {
+      if (!site) return { files: [] };
+      const files = (await gitops.changes(site.dir)).map((f) => {
+        if (isSecretPath(f.path)) return { ...f, diff: '', hidden: 'Not shown: this looks like a secrets file.' };
+        if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
+        return f;
+      });
+      return { files };
+    },
+
+    'POST /api/ai': async (body) => {
+      ai = config.saveAi(body.ai);
+      endChat(); // a different AI starts a fresh conversation
+      pushState();
+      return snapshot();
+    },
+    // Ask a local Ollama which models it has.
+    'POST /api/ai/models': async (body) => {
+      const { ollamaUrl } = cleanAi({ ollamaUrl: body.ollamaUrl });
+      try {
+        const res = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(4000) });
+        if (!res.ok) throw new Error(`it answered ${res.status}`);
+        const data = await res.json();
+        return { models: (data.models || []).map((m) => m.name).sort() };
+      } catch (err) {
+        throw new Error(`Could not reach Ollama at ${ollamaUrl} (${err.message}). Is it running?`);
+      }
+    },
   };
 
   function readJson(req) {
@@ -228,6 +291,7 @@ export async function createApp({ home, gitops, config }) {
     },
     async close() {
       clearInterval(ping);
+      endChat();
       watcher?.close();
       await runner.stop();
       await proxy.close();

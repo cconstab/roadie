@@ -5,7 +5,9 @@ import { run as realRun } from './exec.js';
 export function createGitOps({ run = realRun } = {}) {
   // Never let git or gh stop to ask a question in a terminal nobody is watching.
   const env = () => ({ ...process.env, GIT_TERMINAL_PROMPT: '0', GH_PROMPT_DISABLED: '1' });
-  const git = (cwd, args, opts = {}) => run('git', args, { cwd, env: env(), ...opts });
+  // Hooks in a site's clone are never run: Roadie's git commands must do exactly
+  // what the interface says and nothing more.
+  const git = (cwd, args, opts = {}) => run('git', ['-c', 'core.hooksPath=/dev/null', ...args], { cwd, env: env(), ...opts });
   const gh = (cwd, args, opts = {}) => run('gh', args, { cwd, env: env(), ...opts });
 
   // Git commands that talk to GitHub over HTTPS sign in through gh, for this one
@@ -105,6 +107,39 @@ export function createGitOps({ run = realRun } = {}) {
 
     pullFastForward(dir, branch) {
       return must(git(dir, ['merge', '--ff-only', `origin/${branch}`]), `Updating ${branch}`);
+    },
+
+    // Every file in the working tree that is tracked or new, minus ignored ones.
+    async listFiles(dir) {
+      const r = await git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+      if (r.code !== 0) throw new Error(`Listing files failed: ${r.stderr.trim()}`);
+      return [...new Set(r.stdout.split('\0').filter(Boolean))].sort();
+    },
+
+    // What differs from the last commit: [{ path, status, diff }].
+    async changes(dir) {
+      const st = await git(dir, ['status', '--porcelain=v1', '-z', '--untracked-files=all']);
+      if (st.code !== 0) throw new Error(`git status failed: ${st.stderr.trim()}`);
+      const fields = st.stdout.split('\0');
+      const out = [];
+      for (let i = 0; i < fields.length; i++) {
+        const field = fields[i];
+        if (field.length < 4) continue;
+        const xy = field.slice(0, 2);
+        const file = field.slice(3);
+        let from = null;
+        if (xy.includes('R') || xy.includes('C')) from = fields[++i]; // the old name follows
+        const status = xy === '??' ? 'added'
+          : xy.includes('D') ? 'deleted'
+          : xy.includes('R') ? 'renamed'
+          : xy.includes('A') ? 'added'
+          : 'modified';
+        const d = xy === '??'
+          ? await git(dir, ['diff', '--no-color', '--no-ext-diff', '--no-index', '--', '/dev/null', file])
+          : await git(dir, ['diff', '--no-color', '--no-ext-diff', 'HEAD', '--', ...(from ? [from, file] : [file])]);
+        out.push({ path: file, from, status, diff: d.stdout });
+      }
+      return out;
     },
 
     // Which of these paths does the repo's .gitignore cover?

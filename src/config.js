@@ -26,6 +26,25 @@ export function cleanSettings(input = {}) {
   return out;
 }
 
+export const DEFAULT_AI = {
+  provider: 'anthropic',
+  model: 'claude-fable-5-2',
+  ollamaUrl: 'http://localhost:11434',
+  ollamaModel: '',
+};
+
+export function cleanAi(input = {}) {
+  const text = (v, fallback) => (typeof v === 'string' ? v.trim() : fallback);
+  const ai = {
+    provider: input.provider === 'ollama' ? 'ollama' : 'anthropic',
+    model: text(input.model, DEFAULT_AI.model),
+    ollamaUrl: text(input.ollamaUrl, DEFAULT_AI.ollamaUrl).replace(/\/+$/, '') || DEFAULT_AI.ollamaUrl,
+    ollamaModel: text(input.ollamaModel, ''),
+  };
+  if (!/^https?:\/\//i.test(ai.ollamaUrl)) ai.ollamaUrl = DEFAULT_AI.ollamaUrl;
+  return ai;
+}
+
 export function createConfig(home = roadieHome()) {
   const file = path.join(home, 'config.json');
 
@@ -67,6 +86,16 @@ export function createConfig(home = roadieHome()) {
     },
     lastSite() {
       return load().lastSite || null;
+    },
+    // Which AI to use. Keys and tokens are never stored here.
+    getAi() {
+      return cleanAi({ ...DEFAULT_AI, ...load().ai });
+    },
+    saveAi(ai) {
+      const data = load();
+      data.ai = cleanAi(ai);
+      save(data);
+      return data.ai;
     },
   };
 }

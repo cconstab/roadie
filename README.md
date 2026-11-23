@@ -4,8 +4,9 @@ Edit a hand-coded website by chatting with an AI, watch a live preview, then wal
 the change through GitHub to staging and production. Roadie runs on your own
 machine, against your own site.
 
-**Status: milestone 1 of 5.** Opening a site and the live preview work. Chat, diffs
-and the change bar are still to come. See [PROGRESS.md](PROGRESS.md).
+**Status: milestone 2 of 5.** Opening a site, the live preview, chatting with the AI
+and the list of changes work. The change bar (branch, tests, pull request, merge,
+release) is still to come. See [PROGRESS.md](PROGRESS.md).
 
 ## Setup
 
@@ -14,8 +15,11 @@ You need:
 - Node 24 or newer
 - `git`, with your name and email set
 - the GitHub command-line tool `gh`, signed in (`gh auth login`)
+- an AI to do the editing: an Anthropic API key, or [Ollama](https://ollama.com) with a local model
 
 ```sh
+npm install                          # the Claude Agent SDK and zod, nothing else
+export ANTHROPIC_API_KEY=sk-ant-...  # skip this if you will use Ollama
 npm start     # runs Roadie at http://127.0.0.1:4747 and opens your browser
 npm test      # runs the tests
 ```
@@ -54,6 +58,46 @@ straight to the site, without the proxy.
 
 Editing a file reloads the preview. Editing anything that might be server code
 restarts the site first. Files covered by the site's `.gitignore` are ignored.
+
+## Chatting with the AI
+
+Type what you want changed in the left pane. You see what the AI is doing as it
+works (files it reads and edits, test runs), the preview reloads as files change,
+and the right pane lists every changed file with its diff against the last commit.
+**Stop** interrupts it. **New chat** starts a fresh conversation.
+
+Choose the AI with the button next to the Chat heading:
+
+- **Claude, with an Anthropic API key.** Roadie reads `ANTHROPIC_API_KEY` from the
+  environment it was started in and never stores it. (Amazon Bedrock, Google Vertex
+  and Microsoft Foundry work too, through the environment variables the Claude Agent
+  SDK documents.) You pay Anthropic for what you use.
+- **A local model, with Ollama.** Give the address of your Ollama server and pick a
+  model. Choose one that supports tools, and give it a context window of 64k or more.
+  Small local models are much weaker at careful edits than Claude.
+
+### What the AI can and cannot do
+
+The limits are enforced by Roadie, not left to the AI's judgement:
+
+- It can read, create and edit files **inside the open site's folder only**.
+- It cannot touch `.git`, or files that look like secrets (`.env`, key files).
+- It can list and search the site's files, and run the site's test command.
+- It has no shell, no git, no `gh` and no web access, so it can never push, open
+  a pull request, merge or release. Only your clicks do that.
+- It does not load Claude settings, instructions or plugins from your machine.
+
+It is told to treat the repo as the source of truth, read the README and tests
+first, follow the existing style, add no frameworks or dependencies, keep the
+security policy intact, change only what the task needs, leave CI, Docker and
+deploy files alone unless asked, and update tests for what it changes.
+
+### How tests are run
+
+Test files are code the AI may have edited, so on macOS the test command runs in
+a sandbox: it can reach servers on your own machine but nothing beyond it, and it
+cannot write to the site's `.git` folder. On other systems tests run without that
+sandbox for now. Either way they get no AI key and no GitHub token.
 
 ## Where things live
 

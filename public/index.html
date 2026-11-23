@@ -30,9 +30,23 @@
   </nav>
 
   <main class="panes">
-    <section class="pane" aria-labelledby="chat-h">
-      <h2 id="chat-h">Chat</h2>
-      <p class="empty">Chat with the AI arrives in milestone 2.</p>
+    <section class="pane chat" aria-labelledby="chat-h">
+      <div class="pane-head">
+        <h2 id="chat-h">Chat</h2>
+        <button type="button" id="ai-btn" class="pill-button" title="AI settings"><span id="ai-label" class="pill"></span></button>
+        <span class="spacer"></span>
+        <button type="button" id="new-chat-btn" disabled>New chat</button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <form id="chat-form" class="composer">
+        <label for="chat-input" class="sr">Message to the AI</label>
+        <textarea id="chat-input" rows="3" placeholder="Describe the change you want…" disabled></textarea>
+        <div class="composer-actions">
+          <span id="chat-hint" class="muted"></span>
+          <button type="button" id="stop-chat" hidden>Stop</button>
+          <button type="submit" id="send-btn" class="primary" disabled>Send</button>
+        </div>
+      </form>
     </section>
 
     <section class="pane preview" aria-labelledby="preview-h">
@@ -55,9 +69,12 @@
       <pre id="log" class="log" hidden></pre>
     </section>
 
-    <section class="pane" aria-labelledby="files-h">
-      <h2 id="files-h">Changed files</h2>
-      <p class="empty">Diffs arrive in milestone 2.</p>
+    <section class="pane changes" aria-labelledby="files-h">
+      <div class="pane-head">
+        <h2 id="files-h">Changed files</h2>
+        <span id="changes-count" class="pill" hidden></span>
+      </div>
+      <div id="changes" class="changes-list"></div>
     </section>
   </main>
 
@@ -78,6 +95,32 @@
       <div class="actions">
         <button type="button" id="settings-cancel">Cancel</button>
         <button type="submit" id="settings-save" class="primary">Save and run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="ai-dialog">
+    <form id="ai-form" method="dialog">
+      <h2>AI settings</h2>
+      <p class="muted">Which AI edits the site. Roadie never stores keys.</p>
+      <div class="fields">
+        <label class="choice"><input type="radio" name="provider" value="anthropic"> Claude, with an Anthropic API key</label>
+        <div class="sub" data-for="anthropic">
+          <p id="key-status" class="muted"></p>
+          <label>Model <input name="model" spellcheck="false" placeholder="leave empty for the default"></label>
+        </div>
+        <label class="choice"><input type="radio" name="provider" value="ollama"> A local model, with Ollama</label>
+        <div class="sub" data-for="ollama">
+          <label>Ollama address <input name="ollamaUrl" type="url" spellcheck="false"></label>
+          <label>Model
+            <span class="row"><select name="ollamaModel"></select><button type="button" id="ollama-refresh">Refresh list</button></span>
+            <small id="ollama-note">Pick a model that supports tools, and give it a context window of 64k or more.</small>
+          </label>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="ai-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
       </div>
     </form>
   </dialog>

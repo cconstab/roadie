@@ -46,13 +46,19 @@ export async function listeningHost(port) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// The site must not inherit Roadie's AI credentials.
-function childEnv(extra) {
+// Site code must not inherit Roadie's AI credentials or any GitHub token.
+export function childEnv(extra) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
-    if (/^(ANTHROPIC_|CLAUDE_|AWS_BEARER_TOKEN_BEDROCK)/.test(key)) delete env[key];
+    if (/^(ANTHROPIC_|CLAUDE_|AWS_BEARER_TOKEN_BEDROCK|GH_|GITHUB_TOKEN|SSH_AUTH_SOCK)/.test(key)) delete env[key];
   }
   return { ...env, ...extra };
+}
+
+// Register a child started elsewhere so it is stopped when Roadie exits.
+export function trackChild(child) {
+  live.add(child);
+  return () => live.delete(child);
 }
 
 export class Runner extends EventEmitter {
