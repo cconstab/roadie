@@ -203,6 +203,9 @@ test('the installers name the same downloads the packager builds, and check them
     assert.match(script, /SHA256SUMS/);
     assert.match(script, /does not match the release's checksum, so nothing was installed/);
   }
+  // Both show a progress bar for the big download.
+  assert.match(sh, /curl -fL --progress-bar/);
+  assert.match(ps, /Get-File "\$base\/\$file" .* -Progress/);
   // Roadie itself is installed without administrator rights. The only "sudo" is in the
   // commands offered for a missing system tool, which are shown and run only on a yes.
   assert.doesNotMatch(ps, /RunAs/i);

@@ -12,7 +12,7 @@
 #   $env:ROADIE_INSTALL_DEPS = "yes"|"no" install missing tools without asking / never offer
 #   $env:ROADIE_INSTALL_DIR, $env:ROADIE_NO_LINK, $env:ROADIE_BASE_URL   see below
 $ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue' # PowerShell's own progress display slows a download many times over
 
 $repo = 'cconstab/roadie'
 $dest = if ($env:ROADIE_INSTALL_DIR) { $env:ROADIE_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Roadie' }
@@ -22,6 +22,16 @@ $file = "roadie-windows-$cpu.zip"
 $base = if ($env:ROADIE_BASE_URL) { $env:ROADIE_BASE_URL } elseif ($env:ROADIE_VERSION) { "https://github.com/$repo/releases/download/$($env:ROADIE_VERSION)" } else { "https://github.com/$repo/releases/latest/download" }
 
 function Test-Tool($name) { [bool](Get-Command $name -ErrorAction SilentlyContinue) }
+
+# Download one file. curl.exe comes with Windows 10 and later and draws a progress bar
+# without slowing the download; without it the download is silent.
+function Get-File($url, $out, [switch]$Progress) {
+  $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+  if (-not $curl) { Invoke-WebRequest -UseBasicParsing $url -OutFile $out; return }
+  $show = if ($Progress) { '--progress-bar' } else { '-sS' }
+  & $curl.Source -fL $show -o $out $url
+  if ($LASTEXITCODE -ne 0) { throw "Could not download $url" }
+}
 
 function Confirm-Step($question) {
   if ($env:ROADIE_INSTALL_DEPS -eq 'yes') { return $true }
@@ -74,8 +84,8 @@ $tmp = Join-Path ([IO.Path]::GetTempPath()) ("roadie-install-" + [Guid]::NewGuid
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
   Write-Host "Downloading $file ..."
-  Invoke-WebRequest -UseBasicParsing "$base/$file" -OutFile (Join-Path $tmp $file)
-  Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS" -OutFile (Join-Path $tmp 'SHA256SUMS')
+  Get-File "$base/$file" (Join-Path $tmp $file) -Progress
+  Get-File "$base/SHA256SUMS" (Join-Path $tmp 'SHA256SUMS')
 
   $want = (Get-Content (Join-Path $tmp 'SHA256SUMS') | Where-Object { $_ -match "\s$([regex]::Escape($file))$" }) -replace '\s.*$', ''
   $got = (Get-FileHash -Algorithm SHA256 (Join-Path $tmp $file)).Hash.ToLower()
