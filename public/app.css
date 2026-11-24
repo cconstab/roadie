@@ -252,3 +252,7 @@ dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3r
   .change-row { flex-wrap: wrap; }
   .file-list ul { columns: 1; }
 }
+
+.usage { margin: .25rem 0 0; font-size: .85em; }
+.problems .row { display: flex; align-items: baseline; gap: .6rem; }
+.problems .row p { flex: 1; }

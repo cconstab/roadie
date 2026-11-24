@@ -88,7 +88,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       starterFiles: starterFileList(),
       knownSites: config.siteKeys(),
       ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
-      chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null },
+      chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
       preview: {
         state: s.state,
         mode: s.mode,

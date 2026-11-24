@@ -210,6 +210,24 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
   return options;
 }
 
+// Token and cost totals from an SDK result message (all models it used, added up).
+// The cost is the SDK's estimate at list prices, not a bill.
+export function usageOf(result) {
+  const total = { input: 0, cached: 0, output: 0, cost: 0 };
+  if (!result) return total;
+  for (const u of Object.values(result.modelUsage || {})) {
+    total.cached += u.cacheReadInputTokens || 0;
+    total.input += (u.inputTokens || 0) + (u.cacheCreationInputTokens || 0) + (u.cacheReadInputTokens || 0);
+    total.output += u.outputTokens || 0;
+  }
+  total.cost = Number(result.total_cost_usd) || 0;
+  return total;
+}
+
+export function addUsage(a, b) {
+  return { input: a.input + b.input, cached: a.cached + b.cached, output: a.output + b.output, cost: a.cost + b.cost };
+}
+
 // Pull the title and body out of whatever the model replied with.
 export function parseDraft(text) {
   const raw = String(text || '').trim();
@@ -336,6 +354,12 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   const toolItems = new Map();
   let stderrTail = '';
   let info = null;          // what the SDK says it started with: { model, tools }
+  // Tokens and estimated cost for this chat. Each result from the SDK carries
+  // the running total for its AI process, so the latest replaces the last; the
+  // totals of processes that have ended are kept in `spent`.
+  let spent = usageOf(null);
+  let running = usageOf(null);
+  const usage = () => addUsage(spent, running);
 
   const add = (item) => {
     const full = { id: nextId++, ...item };
@@ -396,6 +420,8 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
           : { status: 'done' });
       }
     } else if (m.type === 'result') {
+      running = usageOf(m);
+      emit({ op: 'usage', usage: usage() });
       for (const item of toolItems.values()) if (item.status === 'running') update(item, { status: 'stopped' });
       toolItems.clear();
       if (m.subtype !== 'success' && !interrupted) {
@@ -420,7 +446,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         add({ role: 'error', text: `The AI process stopped: ${err.message}${tail ? '\n' + tail : ''}` });
       }
     } finally {
-      if (query === q) { query = null; endFeed(feed); feed = null; }
+      if (query === q) { query = null; endFeed(feed); feed = null; spent = usage(); running = usageOf(null); }
       interrupted = false;
       setBusy(false);
     }
@@ -440,6 +466,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     get items() { return items; },
     get busy() { return busy; },
     get info() { return info; },
+    get usage() { return usage(); },
     // `context` is background for the AI that is not shown in the chat.
     send(message, { context } = {}) {
       const trimmed = String(message || '').trim();

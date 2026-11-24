@@ -47,6 +47,7 @@
       <form id="chat-form" class="composer">
         <label for="chat-input" class="sr">Message to the AI</label>
         <textarea id="chat-input" rows="3" placeholder="Describe the change you want…" disabled></textarea>
+        <p id="chat-usage" class="muted usage" hidden></p>
         <div class="composer-actions">
           <span id="chat-hint" class="muted"></span>
           <button type="button" id="stop-chat" hidden>Stop</button>
@@ -208,7 +209,18 @@
         <label class="choice"><input type="radio" name="provider" value="anthropic"> Claude, with an Anthropic API key</label>
         <div class="sub" data-for="anthropic">
           <p id="key-status" class="muted"></p>
-          <label>Model <input name="model" spellcheck="false" placeholder="leave empty for the default"></label>
+          <label>Model
+            <select name="modelChoice">
+              <option value="claude-fable-5-2">Claude Fable 5.2 (most capable, highest cost)</option>
+              <option value="claude-opus-5-5">Claude Opus 5.5</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (faster, lower cost)</option>
+              <option value="claude-haiku-5-5">Claude Haiku 5.5 (fastest, lowest cost)</option>
+              <option value="">Another model…</option>
+            </select>
+          </label>
+          <label id="model-other">Model name <input name="model" spellcheck="false" placeholder="for example claude-opus-5-5"></label>
+          <p class="muted">Roadie shows the tokens each chat uses and an estimated cost under the chat box. It cannot show your remaining credit: Anthropic does not report that to an API key. See it in the
+            <a href="https://platform.claude.com/settings/billing" target="_blank" rel="noopener noreferrer">Console's billing page</a>.</p>
         </div>
         <label class="choice"><input type="radio" name="provider" value="ollama"> A local model, with Ollama</label>
         <div class="sub" data-for="ollama">

@@ -381,3 +381,18 @@ test('if the AI cannot be started, the chat says so and stays usable', (t) => {
   chat.send('hello again'); // and the next message goes through
   assert.equal(chat.busy, true);
 });
+
+test('a chat adds up the tokens and estimated cost the SDK reports', async () => {
+  const { usageOf, addUsage } = await import('../src/agent.js');
+  assert.deepEqual(usageOf(null), { input: 0, cached: 0, output: 0, cost: 0 });
+  const result = {
+    total_cost_usd: 0.42,
+    modelUsage: {
+      'claude-fable-5-2': { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 1000, cacheCreationInputTokens: 200 },
+      'claude-haiku-5-5': { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+    },
+  };
+  // "input" is everything sent, including what was read from or written to the cache.
+  assert.deepEqual(usageOf(result), { input: 1310, cached: 1000, output: 55, cost: 0.42 });
+  assert.deepEqual(addUsage(usageOf(result), usageOf(result)), { input: 2620, cached: 2000, output: 110, cost: 0.84 });
+});

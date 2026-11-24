@@ -51,8 +51,10 @@ export const LAUNCHER_CMD = [
   'rem Starts Roadie with the Node runtime that came in this folder.',
   'rem Sites get this Node and npm too, after any the person has installed themselves.',
   'setlocal',
-  'set "ROADIE_RUNTIME_BIN=%~dp0runtime"',
-  '"%~dp0runtime\\node.exe" "%~dp0app\\src\\main.js" %*',
+  'rem %~dp0 alone can give the current folder when this file is found through PATH and its name was typed in quotes.',
+  'for %%I in ("%~f0") do set "ROADIE_DIR=%%~dpI"',
+  'set "ROADIE_RUNTIME_BIN=%ROADIE_DIR%runtime"',
+  '"%ROADIE_DIR%runtime\\node.exe" "%ROADIE_DIR%app\\src\\main.js" %*',
   '',
 ].join('\r\n');
 

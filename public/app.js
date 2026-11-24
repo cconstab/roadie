@@ -44,7 +44,7 @@ let problemShown = false; // a message from showProblem stays until dismissed
 
 function renderProblems() {
   if (problemShown) return;
-  const bad = state.checks.filter((c) => !c.ok);
+  const bad = state.checks.filter((c) => !c.ok && !hiddenAdvice.has(c.id));
   const box = $('problems');
   if (!bad.length) { box.hidden = true; box.replaceChildren(); return; }
   box.hidden = false;
@@ -54,8 +54,26 @@ function renderProblems() {
     const fix = document.createElement('p');
     fix.className = 'fix';
     fix.textContent = c.fix || '';
-    return [p, fix];
+    if (!ADVICE.has(c.id)) return [p, fix];
+    // Advice, not a fault: it can be closed, and stays closed in this browser.
+    const row = document.createElement('div');
+    row.className = 'row';
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.textContent = 'Got it';
+    close.addEventListener('click', () => { hideAdvice(c.id); renderProblems(); });
+    row.append(p, close);
+    return [row, fix];
   }));
+}
+
+// Notices that are advice about this system (no sandbox here) and not something to fix.
+const ADVICE = new Set(['sandbox']);
+const hiddenAdvice = new Set();
+try { for (const id of JSON.parse(localStorage.getItem('roadie.hiddenAdvice') || '[]')) hiddenAdvice.add(id); } catch { /* no storage: shown each time */ }
+function hideAdvice(id) {
+  hiddenAdvice.add(id);
+  try { localStorage.setItem('roadie.hiddenAdvice', JSON.stringify([...hiddenAdvice])); } catch { /* hidden until the page is reloaded */ }
 }
 
 // A newer Roadie has been released: say so, and install it only when asked.
@@ -225,6 +243,20 @@ function syncChat(chat) {
     else { entry.item = { ...item }; scrollChat(() => paintItem(entry.el, item)); }
   }
   setChatBusy(chat.busy);
+  renderUsage(chat.usage);
+}
+
+const compact = (n) => (n >= 1_000_000 ? (n / 1_000_000).toFixed(2) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
+
+// What this chat has used so far. The cost is an estimate at list prices.
+function renderUsage(usage) {
+  const el = $('chat-usage');
+  if (!usage || !(usage.input + usage.output)) { el.hidden = true; return; }
+  const local = state.ai && state.ai.provider === 'ollama';
+  el.hidden = false;
+  el.textContent = `This chat: ${compact(usage.input)} tokens in${usage.cached ? ` (${compact(usage.cached)} from cache)` : ''}, ${compact(usage.output)} out`
+    + (local || !usage.cost ? '' : ` · about ${usage.cost < 0.01 ? usage.cost.toFixed(4) : usage.cost.toFixed(2)}`);
+  el.title = local ? 'Tokens used by the local model.' : 'Estimated from Anthropic list prices. Your bill may differ.';
 }
 
 function applyChat(update) {
@@ -237,6 +269,8 @@ function applyChat(update) {
     scrollChat(() => paintItem(entry.el, entry.item));
   } else if (update.op === 'busy') {
     setChatBusy(update.busy);
+  } else if (update.op === 'usage') {
+    renderUsage(update.usage);
   }
 }
 
@@ -355,12 +389,23 @@ async function loadOllamaModels() {
   }
 }
 
+// The model name box is only for a model that is not in the list.
+function showModelOther() {
+  const form = $('ai-form');
+  const other = form.elements.modelChoice.value === '';
+  $('model-other').hidden = !other;
+  if (!other) form.elements.model.value = form.elements.modelChoice.value;
+}
+
 function showAiSettings() {
   const { ai } = state;
   if (!ai) return;
   const form = $('ai-form');
   form.elements.provider.value = ai.provider;
   form.elements.model.value = ai.model;
+  const listed = [...form.elements.modelChoice.options].some((o) => o.value && o.value === ai.model);
+  form.elements.modelChoice.value = listed ? ai.model : '';
+  showModelOther();
   form.elements.ollamaUrl.value = ai.ollamaUrl;
   form.elements.ollamaModel.replaceChildren(new Option(ai.ollamaModel || 'loading…', ai.ollamaModel));
   $('key-status').textContent = ai.keyFound
@@ -883,11 +928,12 @@ $('new-chat-btn').addEventListener('click', () => api('POST', '/api/chat/new').t
 
 $('ai-btn').addEventListener('click', showAiSettings);
 $('ai-cancel').addEventListener('click', () => $('ai-dialog').close());
-$('ai-form').addEventListener('change', (e) => { if (e.target.name === 'provider') { showAiProvider(); if (e.target.value === 'ollama') loadOllamaModels(); } });
+$('ai-form').addEventListener('change', (e) => { if (e.target.name === 'modelChoice') showModelOther(); if (e.target.name === 'provider') { showAiProvider(); if (e.target.value === 'ollama') loadOllamaModels(); } });
 $('ollama-refresh').addEventListener('click', loadOllamaModels);
 $('ai-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const ai = Object.fromEntries(new FormData(e.target));
+  delete ai.modelChoice; // the list only fills in "model"
   $('ai-dialog').close();
   try { setState(await api('POST', '/api/ai', { ai })); } catch (err) { showProblem(err.message); }
 });

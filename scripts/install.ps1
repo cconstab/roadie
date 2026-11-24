@@ -109,8 +109,10 @@ if ($env:ROADIE_NO_LINK) {
   $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
   if (-not (($userPath -split ';') -contains $dest)) {
     [Environment]::SetEnvironmentVariable('Path', ((@($userPath, $dest) | Where-Object { $_ }) -join ';'), 'User')
-    Write-Host '(The "roadie" command is found by terminals opened from now on.)'
   }
+  # The saved PATH only reaches terminals opened later, so add it to this one as well.
+  if (-not (($env:Path -split ';') -contains $dest)) { $env:Path = "$env:Path;$dest" }
+  Write-Host '(The "roadie" command works in this window and in terminals opened from now on. Terminals that were already open need reopening.)'
 }
 
 try { Test-Needs } catch { Write-Host "  Could not finish checking: $_" }

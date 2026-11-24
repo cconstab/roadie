@@ -179,8 +179,11 @@ test('the release downloads cover each system, and their launchers suit it', asy
   assert.deepEqual(TARGETS.map((t) => t.name), ['macos-arm64', 'macos-x64', 'linux-x64', 'linux-arm64', 'windows-x64', 'windows-arm64']);
   // cmd.exe wants CRLF; sh must not have it.
   assert.ok(LAUNCHER_CMD.includes('\r\n') && !/[^\r]\n/.test(LAUNCHER_CMD));
-  assert.match(LAUNCHER_CMD, /"%~dp0runtime\\node\.exe" "%~dp0app\\src\\main\.js" %\*/);
-  assert.match(LAUNCHER_CMD, /setlocal\r\nset "ROADIE_RUNTIME_BIN=%~dp0runtime"/);
+  // The folder comes from the file's full name, which is right however the command was found.
+  assert.match(LAUNCHER_CMD, /for %%I in \("%~f0"\) do set "ROADIE_DIR=%%~dpI"\r\n/);
+  assert.match(LAUNCHER_CMD, /"%ROADIE_DIR%runtime\\node\.exe" "%ROADIE_DIR%app\\src\\main\.js" %\*/);
+  assert.match(LAUNCHER_CMD, /set "ROADIE_RUNTIME_BIN=%ROADIE_DIR%runtime"/);
+  assert.doesNotMatch(LAUNCHER_CMD, /%~dp0runtime|%~dp0app/);
   assert.doesNotMatch(LAUNCHER_SH, /\r/);
   assert.match(LAUNCHER_SH, /ROADIE_RUNTIME_BIN="\$here\/runtime\/bin" exec "\$here\/runtime\/bin\/node" "\$here\/app\/src\/main\.js" "\$@"/);
 });
