@@ -353,6 +353,38 @@ export function createGitOps({ run = realRun } = {}) {
       return !/No local changes/i.test(r.stdout);
     },
 
+    // Put one changed file back as it was at `base`, recoverably. What was not
+    // yet committed goes into git stash; anything the change's branch had
+    // already committed for it is then taken back to `base` in the working tree.
+    // change: one entry from changes() ({ path, from, status }).
+    async restoreFile(dir, base, change) {
+      const paths = [change.from, change.path].filter(Boolean);
+      // A repo with no commits yet has nothing to go back to and no stash: the
+      // file is simply taken out. The interface says so before it asks.
+      if (!(await this.hasCommits(dir))) {
+        for (const file of paths) {
+          await git(dir, ['rm', '-q', '-f', '--cached', '--ignore-unmatch', '--', `:(literal)${file}`]);
+          fs.rmSync(path.join(dir, file), { force: true });
+        }
+        return { stashed: false };
+      }
+      let stashed = false;
+      for (const file of paths) {
+        // ":(literal)" so a name with * or [ in it means that one file only.
+        const stash = await git(dir, ['stash', 'push', '--include-untracked', '-m', `roadie: undo ${file}`, '--', `:(literal)${file}`]);
+        const said = stash.stdout + stash.stderr;
+        // A file the branch has already committed away is not there to set aside.
+        if (stash.code !== 0 && !/did not match any file/i.test(said)) throw new Error(`Setting ${file} aside failed: ${said.trim()}`);
+        if (stash.code === 0 && !/No local changes/i.test(said)) stashed = true;
+      }
+      for (const file of paths) {
+        const inBase = (await git(dir, ['cat-file', '-e', `${base}:${file}`])).code === 0;
+        if (inBase) await must(git(dir, ['checkout', base, '--', `:(literal)${file}`]), `Restoring ${file}`);
+        else await must(git(dir, ['rm', '-q', '-f', '--ignore-unmatch', '--', `:(literal)${file}`]), `Removing ${file}`);
+      }
+      return { stashed };
+    },
+
     // --- GitHub, through gh. Every call names the repo, so it cannot act on another. ---
 
     async repoInfo(slug) {

@@ -47,8 +47,11 @@
       <form id="chat-form" class="composer">
         <label for="chat-input" class="sr">Message to the AI</label>
         <textarea id="chat-input" rows="3" placeholder="Describe the change you want…" disabled></textarea>
+        <ul id="attachments" class="attachments" aria-label="Images to show the AI" hidden></ul>
         <p id="chat-usage" class="muted usage" hidden></p>
         <div class="composer-actions">
+          <button type="button" id="add-files-btn" title="Add images or other files to the site, or show the AI a screenshot. You can also drop files here or paste an image." disabled>Add files</button>
+          <input type="file" id="file-picker" multiple hidden>
           <span id="chat-hint" class="muted"></span>
           <button type="button" id="stop-chat" hidden>Stop</button>
           <button type="submit" id="send-btn" class="primary" disabled>Send</button>
@@ -62,6 +65,13 @@
         <span id="preview-status" class="pill">no site</span>
         <span id="preview-path" class="path"></span>
         <span class="spacer"></span>
+        <label class="sr" for="preview-width">Preview width</label>
+        <select id="preview-width" title="How wide the preview is">
+          <option value="">Full width</option>
+          <option value="1024">Laptop (1024)</option>
+          <option value="768">Tablet (768)</option>
+          <option value="390">Phone (390)</option>
+        </select>
         <button type="button" id="run-btn" disabled>Run</button>
         <button type="button" id="stop-btn" disabled>Stop</button>
         <button type="button" id="reload-btn" disabled>Reload</button>
@@ -162,6 +172,31 @@
       <div class="actions">
         <button type="button" id="confirm-cancel">Cancel</button>
         <button type="submit" id="confirm-go" class="primary"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="files-dialog" class="wide">
+    <form id="files-form" method="dialog">
+      <h2>Add files</h2>
+      <ul id="files-list" class="upload-list"></ul>
+      <div class="fields">
+        <label class="choice"><input type="radio" name="mode" value="site" checked> Add to the site</label>
+        <div class="sub" id="files-site">
+          <label>Folder in the site <input name="folder" list="site-folders" spellcheck="false" autocomplete="off">
+            <small>Copied into the site's folder on your machine. They show under Changed files, and go to GitHub only when you open or update a pull request.</small>
+          </label>
+          <datalist id="site-folders"></datalist>
+        </div>
+        <label class="choice"><input type="radio" name="mode" value="ai"> Only show the AI</label>
+        <div class="sub" id="files-ai" hidden>
+          <small id="files-ai-note">For a screenshot or a design to work from. Sent to the AI with your next message, and not saved in the site.</small>
+        </div>
+      </div>
+      <p id="files-error" class="warning" hidden></p>
+      <div class="actions">
+        <button type="button" id="files-cancel">Cancel</button>
+        <button type="submit" id="files-go" class="primary">Add to the site</button>
       </div>
     </form>
   </dialog>

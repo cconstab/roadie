@@ -287,6 +287,7 @@ function renderChatControls() {
   $('ai-label').textContent = ai ? ai.status.label : '';
   $('ai-label').className = 'pill' + (ai && !ai.status.ready ? ' failed' : '');
   $('chat-input').disabled = !ready;
+  $('add-files-btn').disabled = !site;
   $('send-btn').disabled = !ready || chatBusy;
   $('stop-chat').hidden = !chatBusy;
   $('new-chat-btn').disabled = chatBusy || chatItems.size === 0;
@@ -299,12 +300,13 @@ function renderChatControls() {
 
 const openDiffs = new Map(); // path -> was the diff left open?
 let changesTimer = null;
+let undoKeeps = true; // does Undo keep the edits (git stash), or is the repo too new for that?
 
 // Bursts of file changes are gathered into one refresh; pass 0 to refresh at once.
 function refreshChanges(delay = 250) {
   clearTimeout(changesTimer);
   changesTimer = setTimeout(async () => {
-    try { renderChanges((await api('GET', '/api/changes')).files); }
+    try { const data = await api('GET', '/api/changes'); undoKeeps = data.undoKeeps !== false; renderChanges(data.files); }
     catch (err) { console.error('Could not load changes:', err); }
   }, delay);
 }
@@ -343,8 +345,23 @@ function renderChanges(files) {
     const status = document.createElement('span');
     status.className = 'status ' + f.status;
     status.textContent = f.status;
-    summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status);
+    const undo = document.createElement('button');
+    undo.type = 'button';
+    undo.className = 'undo';
+    undo.textContent = 'Undo';
+    undo.title = 'Put this file back as it was before the change';
+    undo.disabled = chatBusy;
+    undo.addEventListener('click', (e) => { e.preventDefault(); undoFile(f); });
+    summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status, span('', 'spacer'), undo);
     details.append(summary);
+    if (isPicture(f.path) && f.status !== 'deleted' && !f.hidden) {
+      const img = document.createElement('img');
+      img.className = 'thumb';
+      img.alt = `${f.path} as it is now`;
+      img.src = `/api/file?path=${encodeURIComponent(f.path)}`;
+      img.addEventListener('error', () => img.remove());
+      details.append(img);
+    }
     if (f.hidden) {
       const note = document.createElement('p');
       note.className = 'diff-note';
@@ -357,13 +374,249 @@ function renderChanges(files) {
       else if (!f.hidden) {
         const note = document.createElement('p');
         note.className = 'diff-note';
-        note.textContent = 'Binary file, or nothing to show as text.';
-        details.append(note);
+        note.textContent = isPicture(f.path) ? (f.status === 'deleted' ? 'This picture is deleted.' : '') : 'Binary file, or nothing to show as text.';
+        if (note.textContent) details.append(note);
       }
     }
     return details;
   }));
 }
+
+const isPicture = (name) => /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)$/i.test(name);
+
+async function undoFile(f) {
+  const what = f.status === 'added' ? 'The file is taken out of the site.'
+    : f.status === 'deleted' ? 'The file comes back.'
+    : 'The file goes back to how it was before this change.';
+  const kept = undoKeeps ? 'Roadie sets the edits aside with "git stash", so they can be recovered.'
+    : 'This repo has no commits yet, so there is nowhere to keep the file: it is deleted for good.';
+  if (!window.confirm(`Undo the changes to ${f.path}?\n\n${what} ${kept} Nothing is sent anywhere.`)) return;
+  try { await api('POST', '/api/changes/undo', { path: f.path }); }
+  catch (err) { showProblem(err.message); }
+  refreshChanges(0);
+  loadChange();
+}
+
+// --- adding files, and showing the AI a picture --------------------------------
+
+const AI_IMAGE = /^image\/(png|jpeg|gif|webp)$/;
+const MAX_ADD_BYTES = 25 * 1024 * 1024;
+const MAX_AI_IMAGES = 5;
+let picked = [];            // files chosen in the dialog: { file, name, url }
+const attachments = [];     // pictures waiting to go to the AI with the next message: { name, blob, url }
+const lastFolder = new Map(); // site -> the folder chosen last time
+
+const fileSize = (n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
+
+// A file name that is safe in a web address: lower case, no spaces or accents.
+function tidyName(name) {
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot).toLowerCase().replace(/[^.a-z0-9]/g, '') : '';
+  const stem = (dot > 0 ? name.slice(0, dot) : name).normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').toLowerCase();
+  return (stem || 'file') + ext;
+}
+
+function renderPicked() {
+  const form = $('files-form');
+  const allPictures = picked.length > 0 && picked.every((p) => AI_IMAGE.test(p.file.type));
+  form.elements.mode[1].disabled = !allPictures;
+  if (!allPictures) form.elements.mode.value = 'site';
+  const mode = form.elements.mode.value;
+  $('files-site').hidden = mode !== 'site';
+  $('files-ai').hidden = mode !== 'ai';
+  $('files-ai-note').textContent = 'For a screenshot or a design to work from. Sent to the AI with your next message, and not saved in the site.'
+    + (state.ai && state.ai.provider === 'ollama' ? ' Many local models cannot see images.' : '');
+  $('files-list').replaceChildren(...picked.map((p) => {
+    const li = document.createElement('li');
+    let thumb;
+    if (p.url) { thumb = document.createElement('img'); thumb.src = p.url; thumb.alt = ''; }
+    else { thumb = span((p.name.split('.').pop() || 'file').slice(0, 5), 'no-thumb'); }
+    const box = document.createElement('div');
+    const name = Object.assign(document.createElement('input'), { value: p.name, spellcheck: false, required: true, disabled: mode !== 'site' });
+    name.setAttribute('aria-label', `Name for ${p.file.name}`);
+    name.addEventListener('input', () => { p.name = name.value; });
+    const tooBig = mode === 'site' && p.file.size > MAX_ADD_BYTES;
+    const heavy = mode === 'site' && p.url && p.file.size > 500 * 1024;
+    const note = Object.assign(document.createElement('small'), {
+      className: tooBig || heavy ? 'warn' : '',
+      textContent: fileSize(p.file.size) + (tooBig ? '. Too large to add: the limit is 25 MB.' : heavy ? '. Large for a web page: consider making it smaller first.' : ''),
+    });
+    box.append(name, note);
+    const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Remove' });
+    drop.addEventListener('click', () => { forget(p); picked = picked.filter((x) => x !== p); if (picked.length) renderPicked(); else $('files-dialog').close(); });
+    li.append(thumb, box, drop);
+    return li;
+  }));
+  $('files-go').textContent = mode === 'ai' ? 'Show the AI' : picked.length === 1 ? 'Add to the site' : `Add ${picked.length} files to the site`;
+  $('files-go').disabled = picked.some((p) => mode === 'site' && p.file.size > MAX_ADD_BYTES);
+}
+
+const forget = (p) => { if (p.url) URL.revokeObjectURL(p.url); };
+
+async function chooseFiles(files, { pasted = false } = {}) {
+  if (!state.site) return showProblem('Open a site first.');
+  files = [...files].filter((f) => f.size > 0 || f.type); // a dropped folder has neither
+  if (!files.length) return;
+  const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+  picked.forEach(forget);
+  picked = files.map((file, i) => ({
+    file,
+    name: pasted && /^image\.\w+$/.test(file.name) ? `pasted-${stamp}${files.length > 1 ? '-' + (i + 1) : ''}.${file.name.split('.').pop()}` : tidyName(file.name),
+    url: file.type.startsWith('image/') ? URL.createObjectURL(file) : null,
+  }));
+  const form = $('files-form');
+  $('files-error').hidden = true;
+  // A pasted picture is most often a screenshot for the AI to look at.
+  form.elements.mode.value = pasted && picked.every((p) => AI_IMAGE.test(p.file.type)) ? 'ai' : 'site';
+  form.elements.folder.value = lastFolder.get(state.site.key) || '';
+  renderPicked();
+  if (!$('files-dialog').open) $('files-dialog').showModal();
+  try {
+    const { folders, suggested } = await api('GET', '/api/files/folders');
+    $('site-folders').replaceChildren(...folders.map((f) => new Option(f, f)));
+    if (!form.elements.folder.value) form.elements.folder.value = suggested;
+  } catch { /* the folder can still be typed */ }
+}
+
+async function sendFile(p, folder, replace = false) {
+  const query = new URLSearchParams({ folder, name: p.name, ...(replace ? { replace: '1' } : {}) });
+  const res = await fetch(`/api/files/add?${query}`, {
+    method: 'POST',
+    headers: { 'X-Roadie-Token': token, 'Content-Type': 'application/octet-stream' },
+    body: p.file,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) return data;
+  if (data.exists && !replace) {
+    return window.confirm(`${data.path} already exists in the site.\n\nReplace it with this file?`) ? sendFile(p, folder, true) : null;
+  }
+  throw new Error(data.error || `Request failed (${res.status})`);
+}
+
+// Shrink a picture that is too big for the AI to take: at most 2000 pixels on its
+// longer side. Small ones, and animated GIFs, go as they are.
+async function fitForAi(file) {
+  if (file.type === 'image/gif') return file;
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { return file; }
+  const longest = Math.max(bitmap.width, bitmap.height);
+  if (longest <= 2000 && file.size <= 3.5 * 1024 * 1024) { bitmap.close(); return file; }
+  const scale = Math.min(1, 2000 / longest);
+  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) });
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return (await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))) || file;
+}
+
+const toBase64 = (blob) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(',')[1] || '');
+  reader.onerror = () => reject(new Error('Could not read that file.'));
+  reader.readAsDataURL(blob);
+});
+
+function renderAttachments() {
+  const box = $('attachments');
+  box.hidden = !attachments.length;
+  box.replaceChildren(...attachments.map((a) => {
+    const li = document.createElement('li');
+    const img = Object.assign(document.createElement('img'), { src: a.url, alt: '' });
+    const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: '×', title: `Do not send ${a.name}` });
+    drop.setAttribute('aria-label', `Do not send ${a.name}`);
+    drop.addEventListener('click', () => { URL.revokeObjectURL(a.url); attachments.splice(attachments.indexOf(a), 1); renderAttachments(); });
+    li.append(img, a.name, drop);
+    return li;
+  }));
+  renderChatControls();
+}
+
+$('add-files-btn').addEventListener('click', () => $('file-picker').click());
+$('file-picker').addEventListener('change', (e) => { chooseFiles(e.target.files); e.target.value = ''; });
+$('files-cancel').addEventListener('click', () => $('files-dialog').close());
+$('files-dialog').addEventListener('close', () => { picked.forEach(forget); picked = []; });
+$('files-form').addEventListener('change', (e) => { if (e.target.name === 'mode') renderPicked(); });
+$('files-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const problem = $('files-error');
+  problem.hidden = true;
+  $('files-go').disabled = true;
+  try {
+    if (form.elements.mode.value === 'ai') {
+      if (attachments.length + picked.length > MAX_AI_IMAGES) throw new Error(`Show the AI at most ${MAX_AI_IMAGES} images with one message.`);
+      for (const p of picked) {
+        const blob = await fitForAi(p.file);
+        attachments.push({ name: p.file.name === 'image.png' ? p.name : p.file.name, blob, url: URL.createObjectURL(blob) });
+      }
+      $('files-dialog').close();
+      renderAttachments();
+      return $('chat-input').focus();
+    }
+    const folder = form.elements.folder.value.trim();
+    lastFolder.set(state.site.key, folder);
+    const added = [];
+    const ignored = [];
+    // One at a time, so a file that fails leaves the rest still listed.
+    while (picked.length) {
+      const done = await sendFile(picked[0], folder);
+      if (done) { added.push(done.path); if (done.ignored) ignored.push(done.path); }
+      forget(picked.shift());
+      renderPicked();
+    }
+    $('files-dialog').close();
+    refreshChanges(0);
+    if (ignored.length) showProblem(`${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} in a folder the site's .gitignore leaves out, so ${ignored.length === 1 ? 'it' : 'they'} will not be part of a change. Choose another folder if ${ignored.length === 1 ? 'it belongs' : 'they belong'} in the site.`);
+    const input = $('chat-input');
+    if (added.length && !input.value.trim()) {
+      input.value = `I added ${added.join(', ')}. `;
+      input.focus();
+    }
+  } catch (err) {
+    problem.textContent = err.message;
+    problem.hidden = false;
+    refreshChanges(0);
+    if (picked.length) renderPicked();
+  }
+});
+
+// Files can be dropped on the chat, and a copied picture pasted into the message.
+const chatPane = document.querySelector('.pane.chat');
+const hasFiles = (e) => !!e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+chatPane.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); chatPane.classList.add('dropping'); } });
+chatPane.addEventListener('dragleave', (e) => { if (!chatPane.contains(e.relatedTarget)) chatPane.classList.remove('dropping'); });
+chatPane.addEventListener('drop', (e) => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  chatPane.classList.remove('dropping');
+  chooseFiles(e.dataTransfer.files);
+});
+// Dropped anywhere else, a file would replace Roadie's page with itself.
+window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+window.addEventListener('drop', (e) => { if (hasFiles(e)) e.preventDefault(); });
+$('chat-input').addEventListener('paste', (e) => {
+  const files = e.clipboardData ? [...e.clipboardData.files] : [];
+  if (!files.length) return;
+  e.preventDefault();
+  chooseFiles(files, { pasted: true });
+});
+
+// --- preview width --------------------------------------------------------------
+
+function applyPreviewWidth() {
+  const width = $('preview-width').value;
+  $('frame').style.width = width ? `${width}px` : '';
+  document.querySelector('.preview-body').classList.toggle('narrow', !!width);
+}
+try { $('preview-width').value = localStorage.getItem('roadie.previewWidth') || ''; } catch { /* full width */ }
+$('preview-width').addEventListener('change', () => {
+  applyPreviewWidth();
+  try { localStorage.setItem('roadie.previewWidth', $('preview-width').value); } catch { /* not remembered */ }
+});
+applyPreviewWidth();
 
 // --- AI settings --------------------------------------------------------------
 
@@ -912,10 +1165,14 @@ $('chat-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const input = $('chat-input');
   const text = input.value.trim();
-  if (!text || chatBusy) return;
+  if ((!text && !attachments.length) || chatBusy) return;
   try {
-    await api('POST', '/api/chat/send', { text });
+    const images = await Promise.all(attachments.map(async (a) => ({ name: a.name, data: await toBase64(a.blob) })));
+    await api('POST', '/api/chat/send', { text, images });
     input.value = '';
+    for (const a of attachments) URL.revokeObjectURL(a.url);
+    attachments.length = 0;
+    renderAttachments();
   } catch (err) {
     showProblem(err.message);
   }

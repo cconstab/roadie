@@ -256,3 +256,24 @@ dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3r
 .usage { margin: .25rem 0 0; font-size: .85em; }
 .problems .row { display: flex; align-items: baseline; gap: .6rem; }
 .problems .row p { flex: 1; }
+
+/* Adding files, and pictures in the lists */
+.attachments, .upload-list { list-style: none; margin: 0; padding: 0; }
+.attachments { display: flex; flex-wrap: wrap; gap: .3rem; }
+.attachments li { display: flex; align-items: center; gap: .35rem; border: 1px solid var(--line); border-radius: 6px; padding: .15rem .3rem; font-size: .9em; }
+.attachments img { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; }
+.attachments button { border: 0; padding: 0 .25rem; background: none; }
+.upload-list { display: grid; gap: .4rem; margin-bottom: .8rem; max-height: 40vh; overflow-y: auto; }
+.upload-list li { display: grid; grid-template-columns: 56px 1fr auto; gap: .6rem; align-items: center; }
+.upload-list img, .upload-list .no-thumb { width: 56px; height: 56px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.upload-list .no-thumb { display: grid; place-items: center; color: var(--muted); font-size: .75em; text-transform: uppercase; }
+.upload-list input { width: 100%; }
+.upload-list small { display: block; color: var(--muted); }
+.upload-list small.warn { color: var(--warn); }
+.pane.chat.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }
+.thumb { display: block; max-width: calc(100% - 1.2rem); max-height: 220px; margin: .4rem .6rem; border: 1px solid var(--line); border-radius: 4px;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--muted) 18%, transparent) 0 25%, transparent 0 50%) 0 0 / 16px 16px; }
+.changes-list summary .undo { margin-left: .4rem; font-size: .85em; padding: 0 .4rem; }
+.preview-body.narrow { display: flex; justify-content: center; background: var(--bg); }
+.preview-body.narrow iframe { flex: none; border-inline: 1px solid var(--line); }
+#preview-width { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .25rem; }

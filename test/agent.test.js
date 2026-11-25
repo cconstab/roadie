@@ -88,7 +88,7 @@ test('tools outside the short list are refused by name', (t) => {
   for (const tool of ['Bash', 'WebFetch', 'WebSearch', 'Agent', 'Task', 'NotebookEdit', 'Glob', 'Grep', 'mcp__github__create_pull_request', 'mcp__roadie__push']) {
     assert.match(checkToolUse(dir, tool, { command: 'git push' }), /not available here/, tool);
   }
-  for (const tool of ['mcp__roadie__list_files', 'mcp__roadie__search_files', 'mcp__roadie__run_tests']) {
+  for (const tool of ['mcp__roadie__list_files', 'mcp__roadie__search_files', 'mcp__roadie__run_tests', 'list_files']) {
     assert.equal(checkToolUse(dir, tool, {}), null, tool);
   }
 });
@@ -106,7 +106,7 @@ test('the options handed to the SDK lock the agent down', async (t) => {
   assert.deepEqual(options.settingSources, [], "this machine's Claude settings and CLAUDE.md are not loaded");
   assert.equal(options.strictMcpConfig, true);
   assert.deepEqual(Object.keys(options.mcpServers), ['roadie']);
-  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'run_tests']);
+  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests']);
   assert.equal(options.model, 'claude-test');
   assert.equal(options.systemPrompt.preset, 'claude_code');
   assert.equal(options.systemPrompt.append, STANDING_INSTRUCTIONS);

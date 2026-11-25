@@ -8,13 +8,14 @@ import { aiStatus, createChat, draftPullRequest } from './agent.js';
 import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
 import { createFlow } from './flow.js';
-import { isSecretPath } from './guards.js';
+import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
 import { blankKind, starterFileList, writeStarter } from './starter.js';
 import { runTests } from './tests.js';
+import { MAX_UPLOAD_BYTES, addFile, cleanChatImages, cleanUploadPath, imageType, uploadFolders } from './uploads.js';
 import { protectRoadie, sandboxAvailable } from './sandbox.js';
 import { createRestartGuard, needsRestart, watchSite } from './watcher.js';
 
@@ -26,6 +27,10 @@ const PUBLIC_FILES = {
 };
 const MAX_LOG_LINES = 500;
 const MAX_DIFF_CHARS = 200_000;
+const MAX_JSON_BYTES = 1_000_000;
+// Routes that carry files, and how much they may carry.
+const BIG_JSON = { 'POST /api/chat/send': 36_000_000 };          // up to five 5 MB images, in base64
+const RAW_BODY = { 'POST /api/files/add': MAX_UPLOAD_BYTES };    // the file's own bytes
 
 // The Agent SDK is loaded on first use, so Roadie starts quickly and tests can pass a fake.
 async function loadSdk() {
@@ -272,8 +277,23 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     },
 
     'POST /api/chat/send': async (body) => {
-      (await ensureChat()).send(body.text);
+      const images = cleanChatImages(body.images);
+      (await ensureChat()).send(body.text, { images });
       return { ok: true };
+    },
+
+    // --- files the owner adds by hand: images, fonts, documents ---
+    'GET /api/files/folders': async () => {
+      if (!site) throw new Error('Open a site first.');
+      return uploadFolders(await gitops.listFiles(site.dir));
+    },
+    // One file per request: the body is the file, the address says where it goes.
+    'POST /api/files/add': async (data, { url }) => {
+      if (!site) throw new Error('Open a site first.');
+      const rel = cleanUploadPath(url.searchParams.get('folder'), url.searchParams.get('name'));
+      const added = addFile(site.dir, rel, data, { replace: url.searchParams.get('replace') === '1' });
+      const ignored = await gitops.ignored(site.dir, [added.path]).catch(() => new Set());
+      return { ...added, ignored: ignored.has(added.path) };
     },
     'POST /api/chat/stop': async () => { await chat?.stop(); return { ok: true }; },
     'POST /api/chat/new': async () => { endChat(); pushState(); return snapshot(); },
@@ -285,7 +305,21 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
         return f;
       });
-      return { files };
+      // Undo keeps the edits in git stash, which a repo with no commits does not have.
+      return { files, undoKeeps: await gitops.hasCommits(site.dir) };
+    },
+
+    // Put one changed file back as it was. The edits go into git stash, so they can be recovered.
+    'POST /api/changes/undo': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before undoing a file.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const base = flow.base();
+      const change = (await gitops.changes(site.dir, base)).find((f) => f.path === body.path);
+      if (!change) throw new Error(`${body.path} has no changes to undo.`);
+      const result = await gitops.restoreFile(site.dir, base, change);
+      flow.notify();
+      return { ok: true, ...result };
     },
 
     // --- the change bar ---
@@ -338,20 +372,47 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     },
   };
 
-  function readJson(req) {
+  function readBody(req, limit) {
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks = [];
+      let over = false;
       req.on('data', (c) => {
         size += c.length;
-        if (size > 1_000_000) { reject(new Error('Request too large.')); req.destroy(); } else chunks.push(c);
+        // Keep reading (and dropping) so the answer can still be sent; then refuse.
+        if (size > limit) { over = true; chunks.length = 0; } else if (!over) chunks.push(c);
       });
-      req.on('end', () => {
-        try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}); }
-        catch { reject(new Error('Malformed request.')); }
-      });
+      req.on('end', () => (over
+        ? reject(new Error(`That is too large to send: the limit here is ${Math.floor(limit / 1_000_000)} MB.`))
+        : resolve(Buffer.concat(chunks))));
       req.on('error', reject);
     });
+  }
+
+  async function readJson(req, limit) {
+    const raw = await readBody(req, limit);
+    try { return raw.length ? JSON.parse(raw.toString('utf8')) : {}; }
+    catch { throw new Error('Malformed request.'); }
+  }
+
+  // A picture from the site's folder, for the changed-files pane. Pictures only,
+  // through the same gate as every other file, and marked so that a browser
+  // will never run one (an SVG can hold script) as part of Roadie's page.
+  function sendSiteImage(res, rel) {
+    const type = imageType(rel);
+    const checked = site && type ? checkSitePath(site.dir, rel) : { ok: false };
+    let data = null;
+    if (checked.ok) {
+      try { if (fs.statSync(checked.abs).size <= MAX_UPLOAD_BYTES) data = fs.readFileSync(checked.abs); } catch { /* not there */ }
+    }
+    if (!data) { res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }); return res.end('Not found'); }
+    res.writeHead(200, {
+      'Content-Type': type,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    });
+    res.end(data);
   }
 
   const server = http.createServer(async (req, res) => {
@@ -393,7 +454,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         'Cache-Control': 'no-store',
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy':
-          "default-src 'self'; frame-src http://127.0.0.1:* http://localhost:*; img-src 'self' data:; " +
+          "default-src 'self'; frame-src http://127.0.0.1:* http://localhost:*; img-src 'self' data: blob:; " +
           "object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       });
       return res.end(body);
@@ -407,12 +468,23 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       return;
     }
 
-    const handler = routes[`${req.method} ${url.pathname}`];
+    // An <img> cannot send the token, so pictures are let through on the session cookie alone.
+    // Browsers say where a request came from: only Roadie's own page may ask, not the previewed site.
+    if (req.method === 'GET' && url.pathname === '/api/file') {
+      const from = req.headers['sec-fetch-site'];
+      if (from && from !== 'same-origin') return json(403, { error: 'Wrong origin.' });
+      return sendSiteImage(res, url.searchParams.get('path') || '');
+    }
+
+    const route = `${req.method} ${url.pathname}`;
+    const handler = routes[route];
     if (!handler) return json(404, { error: 'No such route.' });
     if (req.headers['x-roadie-token'] !== token) return json(403, { error: 'This request did not come from the Roadie window. Reload the page.' });
     try {
-      const body = req.method === 'POST' ? await readJson(req) : {};
-      json(200, await handler(body));
+      const body = req.method !== 'POST' ? {}
+        : RAW_BODY[route] ? await readBody(req, RAW_BODY[route])
+        : await readJson(req, BIG_JSON[route] || MAX_JSON_BYTES);
+      json(200, await handler(body, { url }));
     } catch (err) {
       json(400, { error: err.message, ...(err.data || {}) });
     }

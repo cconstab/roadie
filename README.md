@@ -157,9 +157,38 @@ starts a fresh conversation.
 as `PORT`, with `HOST=127.0.0.1`) and shows it here. A site with no start command
 is served as static files. The preview reloads when a file changes, and the site
 is restarted first when the change might be server code. **Open in new tab** goes
-straight to the site.
+straight to the site. The width list shows the page as a laptop, tablet or phone
+would.
 
-**Changed files (right).** Every file in the current change, with its diff.
+**Changed files (right).** Every file in the current change, with its diff, or
+the picture itself when the file is an image. **Undo** on a file puts that one
+file back as it was before the change and leaves the rest alone. The edits it
+removes are kept in `git stash`, so they can be recovered. (In a repo with no
+commits yet there is no stash, and Undo says it will delete the file for good.)
+
+### Images and other files
+
+**Add files**, under the chat box, puts images, fonts, PDFs or any other file
+into the site. You can also drop files on the chat, or paste a copied picture
+into the message box. Roadie shows each file, lets you rename it, and offers
+the folder the site already keeps its images in. Then choose one of two things:
+
+- **Add to the site.** The files are copied into the site's folder on your
+  machine and appear under Changed files. The message box is filled in with
+  where they went, so you can tell the AI what to do with them ("use it as the
+  banner on the home page"). The AI can look at an image, link to it, and rename,
+  move or delete it. It cannot draw or edit pictures, apart from SVG.
+- **Only show the AI.** For a screenshot or a design to work from. The picture
+  goes to the AI with your next message and is not saved in the site. Large
+  pictures are shrunk first. This needs a model that can see images: Claude
+  can, and some local models can.
+
+The limits: 25 MB for a file added to the site, and five pictures of up to 5 MB
+each with one message. Roadie warns when an image is over 500 KB, which is large
+for a web page; it does not resize what you add to the site. A file is never
+replaced without asking, and the rules below apply to files you add as much as
+to the AI's edits: nothing goes into `.git`, outside the site's folder, or into
+a file that looks like it holds secrets.
 
 ### About the preview proxy
 
@@ -217,8 +246,9 @@ the AI.
   show exactly what will happen and need your confirmation. A confirmation works
   once, and is refused if any file changed after you saw it.
 - **The AI can never push, merge or release.** It has no shell, no git, no `gh`
-  and no network. It can read and edit files in the open site's folder, list and
-  search them, and run the site's test command. Nothing else. It cannot touch
+  and no network. It can read and edit files in the open site's folder, list,
+  search, rename, move and delete them, and run the site's test command.
+  Nothing else. It cannot touch
   `.git` however the name is spelled, and links in the repo that lead outside
   the site are not followed.
 - **Never commit or push to `main` directly.** The one exception is the first
@@ -331,6 +361,11 @@ Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different p
 - **Staging never reports the new build**: the merge is done; the deploy is not.
   Check the publish job on GitHub and the update script on the server
   (`deploy/update.sh` by hand prints what it is doing).
+- **A picture I added does not show under Changed files**: the folder you chose
+  is one the site's `.gitignore` leaves out. Roadie says so when that happens.
+  Add it again to another folder.
+- **The AI says it cannot see the picture**: the model has no vision. Choose
+  another model with the AI button.
 - **A change is stuck**: **Abandon this change** is offered at every stage and
   always gets you back to `main` without deleting your edits.
 

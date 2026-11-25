@@ -138,6 +138,15 @@ Added the same day:
 - **v0.0.2 published (2026-11-23)**, built by the release workflow. Verified on macOS arm64: a v0.0.1 installed from GitHub was offered v0.0.2, updated itself through `applyUpdate`, and the updated copy started. Not verified: pressing the Update button in a browser, and anything on a real Linux or Windows machine.
 - **v0.0.3 published (2026-11-24)**, built by the release workflow, after the owner's first Windows test of v0.0.2. Changes: the Windows launcher finds its own folder with `%~f0` (not `%~dp0`), and `install.ps1` adds the install folder to the PATH of the window it runs in as well as to the saved one; the sandbox note has a "Got it" button and stays hidden (browser storage); AI settings list the four current Claude models plus "Another model"; a line under the chat shows tokens in (and how many came from cache), tokens out and the cost so far. Remaining credit cannot be read with an ordinary API key, so the settings link to the billing page instead. CI now also runs on ARM Linux and ARM Windows (five systems). Checked: the v0.0.3 Windows zip holds the new launcher. Not verified: the new screens in a browser, and the launcher and PATH fix on real Windows.
 - **After v0.0.3 (not yet released):** `install.ps1` downloads with `curl.exe` (part of Windows 10 and later) so the big download shows a progress bar like the Linux and macOS installer; it falls back to a silent `Invoke-WebRequest` where curl.exe is missing. PowerShell's own progress display stays off because it slows downloads badly. Not run on Windows.
+- **v0.0.4 published (2026-11-24):** the `install.ps1` progress bar above.
+- **After v0.0.4 (not yet released), from the owner's note that there was no way to add images (2026-11-25):**
+  - **Add files** (button, drop on the chat, or paste): copies images and other files into the site through `checkSitePath`, with a rename box, the folder the site already uses for images, a question before replacing, a 25 MB limit and a note when `.gitignore` will leave the file out (`src/uploads.js`, `POST /api/files/add`, one file per request as raw bytes).
+  - **Only show the AI**: up to five pictures go with the next message as image blocks and are not saved anywhere. The kind of picture is read from its bytes. The browser shrinks anything over 2000 pixels first.
+  - **Changed files** shows images as pictures (`GET /api/file`, images only, served with a sandbox policy so an SVG cannot run script in Roadie's page, and refused to any page but Roadie's own).
+  - **Undo** on one changed file (`gitops.restoreFile`): uncommitted edits go to `git stash`, and anything the branch had already committed for that file is taken back to where the change began.
+  - **The AI can now delete and move files** (`delete_file`, `move_file`). Before, it had only Read, Edit and Write, so it could not rename an image or remove a page.
+  - **Preview width**: laptop, tablet and phone widths.
+  - Verified in a real browser (headless Chrome against a stand-in GitHub, real git, and the local model qwen3.5:9b through the real Agent SDK): adding three files, the replace question, refusals for `.git` and `..`, undo with and without commits, drop, paste, the phone width, the AI renaming an added image with `move_file` and putting it on the home page with alt text, and the AI describing an attached picture correctly. A 20 MB binary file adds about 0.6 s to the secrets scan. **Not verified:** any of it on Windows or Linux beyond the automated tests, and attached pictures with Claude itself (no API key on this machine).
 - This is the one place Roadie contacts the internet without a click. It is a read of a public address, sends nothing about the person, and is documented and switchable; the owner should say if they would rather it were off by default.
 
 Why archives and not `.pkg`/`.msi` installers or a single executable: those need Apple and Microsoft code-signing certificates to install without warnings, and a single executable would need a bundling step. The Node program inside the archive is already signed by the Node.js project.
@@ -153,6 +162,9 @@ Why archives and not `.pkg`/`.msi` installers or a single executable: those need
 - Try the chat with a real ANTHROPIC_API_KEY.
 - Test sandbox for Linux (bubblewrap or similar). Today Linux runs tests unsandboxed.
 - Chat history is kept in memory only; restarting Roadie starts a fresh conversation.
+- The AI cannot see the rendered page. The owner can paste a screenshot, but the AI cannot take one itself to check its own work.
+- Images added to the site are not resized or compressed; Roadie only warns above 500 KB.
+- There is no file browser: to see which images a site already has, ask the AI or look in the folder.
 
 - Preview: a site whose pages redirect to an absolute URL on its own port would leave the proxy. Not seen yet; handle if a real site does it.
 - Run the change bar against a real throwaway GitHub repo (ideally an empty one, to cover the first commit and the starter's workflow too).

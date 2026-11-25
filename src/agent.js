@@ -3,13 +3,16 @@
 // What it can do is fixed here, not left to the model's good behaviour:
 //   - Built-in tools: Read, Edit and Write only. No shell, no web, no subagents.
 //   - Every file path is checked: inside the site folder, not .git, not a secrets file.
-//   - Three Roadie tools: list files, search files, and run the site's saved test
-//     command (no arguments, so it cannot be turned into a way to run anything else).
+//   - Five Roadie tools: list files, search files, delete a file, move a file, and
+//     run the site's saved test command (no arguments, so it cannot be turned into
+//     a way to run anything else).
+//   - Pictures the owner attaches to a message reach it as images, never as files.
 //   - No settings, CLAUDE.md, MCP servers, skills or plugins from this machine are loaded.
 // It has no way to reach git, gh or the network, so it can never push, merge or release.
 import fs from 'node:fs';
 import path from 'node:path';
 import { checkSitePath, isSecretPath } from './guards.js';
+import { moveFile, removeFile } from './uploads.js';
 
 export const STANDING_INSTRUCTIONS = `You are working on a hand-coded website through Roadie, a tool its owner uses to edit the site by chatting with you. The owner sees a live preview that reloads when you change a file, and a list of your changes as diffs.
 
@@ -24,6 +27,9 @@ Standing instructions:
 
 How you work here:
 - You can only read and edit files inside the site's folder. Use list_files and search_files to find things.
+- Use delete_file to remove a file and move_file to rename or move one. Do not empty a file or copy its text by hand instead.
+- The owner adds images and other files with Roadie's "Add files" button and tells you where they went. Look at an image with Read before you use it, link to it the way the site already links to its images, and give it alt text that says what it shows. You cannot make or change pictures yourself, except SVG, which is text.
+- The owner may also attach a screenshot or a design to a message for you to work from. That picture is not a file in the site.
 - You have no shell, no git and no network. Roadie's owner handles branches, commits, pull requests and releases with buttons in the interface. Do not ask them to run git commands for you.
 - Files that hold secrets (such as .env) are off limits.
 - When you finish, say briefly what you changed and whether the tests pass.
@@ -36,8 +42,11 @@ Helping with hosting:
 
 const FILE_TOOLS = { Read: 'file_path', Edit: 'file_path', Write: 'file_path' };
 const SERVER = 'roadie';
-const ROADIE_TOOLS = ['list_files', 'search_files', 'run_tests'].map((t) => `mcp__${SERVER}__${t}`);
+const ROADIE_NAMES = ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests'];
+const ROADIE_TOOLS = ROADIE_NAMES.map((t) => `mcp__${SERVER}__${t}`);
 export const ALLOWED_TOOLS = [...Object.keys(FILE_TOOLS), ...ROADIE_TOOLS];
+// Roadie tools that name files: which inputs hold the paths.
+const PATH_INPUTS = { delete_file: ['path'], move_file: ['from', 'to'] };
 
 // Returns null when the call may go ahead, or the reason it may not.
 export function checkToolUse(siteDir, toolName, input) {
@@ -45,8 +54,15 @@ export function checkToolUse(siteDir, toolName, input) {
     const verdict = checkSitePath(siteDir, input && input[FILE_TOOLS[toolName]]);
     return verdict.ok ? null : verdict.reason;
   }
-  if (ROADIE_TOOLS.includes(toolName) || ROADIE_TOOLS.includes(`mcp__${SERVER}__${toolName}`)) return null; // short names are aliases
-  return `${toolName} is not available here. Use Read, Edit, Write, list_files, search_files or run_tests.`;
+  const short = String(toolName).replace(`mcp__${SERVER}__`, ''); // short names are aliases
+  if (ROADIE_NAMES.includes(short)) {
+    for (const key of PATH_INPUTS[short] || []) {
+      const verdict = checkSitePath(siteDir, input && input[key]);
+      if (!verdict.ok) return verdict.reason;
+    }
+    return null;
+  }
+  return `${toolName} is not available here. Use Read, Edit, Write, list_files, search_files, delete_file, move_file or run_tests.`;
 }
 
 // Is a way to reach the chosen AI in place?
@@ -161,6 +177,21 @@ function roadieTools({ sdk, z, gitops, site, runTests }) {
         },
         async ({ query, glob }) => text(await searchFiles({ gitops, dir, query, glob })),
         { alwaysLoad: true }),
+      sdk.tool('delete_file', 'Delete one file from the site. Folders left empty are removed too.',
+        { path: z.string().describe('The file, as a path inside the site folder') },
+        async ({ path: file }) => {
+          try { return text(`Deleted ${removeFile(dir, file).path}.`); }
+          catch (err) { return { ...text(err.message), isError: true }; }
+        }, { alwaysLoad: true }),
+      sdk.tool('move_file', 'Rename or move one file within the site, images included. It never replaces an existing file. Update every link to the file afterwards.',
+        {
+          from: z.string().describe('The file now, as a path inside the site folder'),
+          to: z.string().describe('Its new path inside the site folder'),
+        },
+        async ({ from, to }) => {
+          try { const moved = moveFile(dir, from, to); return text(`Moved ${moved.from} to ${moved.to}.`); }
+          catch (err) { return { ...text(err.message), isError: true }; }
+        }, { alwaysLoad: true }),
       sdk.tool('run_tests', 'Run the site\'s test command and return its output. Takes no arguments.',
         {},
         async () => {
@@ -194,7 +225,7 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
     },
     mcpServers: { [SERVER]: roadieTools({ sdk, z, gitops, site, runTests }) },
     // Some models call Roadie's tools by their short names; send those to the real ones.
-    toolAliases: { list_files: `mcp__${SERVER}__list_files`, search_files: `mcp__${SERVER}__search_files`, run_tests: `mcp__${SERVER}__run_tests` },
+    toolAliases: Object.fromEntries(ROADIE_NAMES.map((name) => [name, `mcp__${SERVER}__${name}`])),
     strictMcpConfig: true,                   // no MCP servers from this machine's config
     settingSources: [],                      // no user or project settings, hooks or CLAUDE.md
     skills: [],
@@ -329,6 +360,8 @@ function toolLabel(siteDir, name, input = {}) {
     case `mcp__${SERVER}__list_files`: return input.glob ? `List files matching ${input.glob}` : 'List files';
     case `mcp__${SERVER}__search_files`: return `Search for "${input.query ?? ''}"`;
     case `mcp__${SERVER}__run_tests`: return 'Run tests';
+    case `mcp__${SERVER}__delete_file`: return `Delete ${rel(input.path)}`;
+    case `mcp__${SERVER}__move_file`: return `Move ${rel(input.from)} to ${rel(input.to)}`;
     default: return name;
   }
 }
@@ -468,13 +501,14 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     get info() { return info; },
     get usage() { return usage(); },
     // `context` is background for the AI that is not shown in the chat.
-    send(message, { context } = {}) {
-      const trimmed = String(message || '').trim();
+    // `images` are pictures for it to look at: [{ name, mediaType, data }], data in base64.
+    send(message, { context, images = [] } = {}) {
+      const trimmed = String(message || '').trim() || (images.length ? 'Look at the attached image.' : '');
       if (!trimmed) throw new Error('Type a message first.');
       if (busy) throw new Error('The AI is still working. Wait for it to finish, or choose Stop.');
       const status = aiStatus(ai);
       if (!status.ready) throw new Error(status.problem);
-      add({ role: 'user', text: trimmed });
+      add({ role: 'user', text: trimmed, ...(images.length ? { detail: `Shown to the AI: ${images.map((i) => i.name).join(', ')}` } : {}) });
       setBusy(true);
       if (!query) {
         try { start(); } catch (err) {
@@ -484,7 +518,11 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
           return;
         }
       }
-      const content = context ? `${trimmed}\n\n<background from="Roadie">\n${context}\n</background>` : trimmed;
+      const words = context ? `${trimmed}\n\n<background from="Roadie">\n${context}\n</background>` : trimmed;
+      const content = !images.length ? words : [
+        ...images.map((i) => ({ type: 'image', source: { type: 'base64', media_type: i.mediaType, data: i.data } })),
+        { type: 'text', text: words },
+      ];
       feed.inbox.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
       feed.wake?.();
     },
