@@ -79,7 +79,7 @@ export function checkSitePath(root, given, { platform = process.platform } = {})
   if (isSecretPath(rel)) {
     return { ok: false, reason: `${rel} looks like a secrets file, so it is off limits.` };
   }
-  return { ok: true, rel, abs: real };
+  return { ok: true, rel, abs: real, root: realRoot };
 }
 
 // --- secrets in what is about to be committed ---------------------------------

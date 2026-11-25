@@ -84,7 +84,7 @@ export function removeFile(siteDir, rel) {
   try { stat = fs.lstatSync(checked.abs); } catch { throw new Error(`${checked.rel} does not exist.`); }
   if (stat.isDirectory()) throw new Error(`${checked.rel} is a folder. Delete the files in it one at a time.`);
   fs.rmSync(checked.abs);
-  pruneEmptyFolders(siteDir, path.dirname(checked.abs));
+  pruneEmptyFolders(checked.root, path.dirname(checked.abs));
   return { path: checked.rel };
 }
 
@@ -113,14 +113,14 @@ export function moveFile(siteDir, from, to) {
   }
   fs.mkdirSync(path.dirname(b.abs), { recursive: true });
   fs.renameSync(a.abs, b.abs);
-  pruneEmptyFolders(siteDir, path.dirname(a.abs));
+  pruneEmptyFolders(a.root, path.dirname(a.abs));
   return { from: a.rel, to: b.rel };
 }
 
 // Git does not keep empty folders, so neither does Roadie: remove the ones a
-// delete or move left behind, stopping at the site folder itself.
-function pruneEmptyFolders(siteDir, start) {
-  const root = fs.realpathSync(siteDir);
+// delete or move left behind, stopping at the site folder itself. `root` is the
+// site folder as checkSitePath resolved it, so the two paths are spelled alike.
+function pruneEmptyFolders(root, start) {
   let dir = start;
   while (dir !== root && dir.startsWith(root + path.sep)) {
     try { fs.rmdirSync(dir); } catch { return; } // not empty, or gone
