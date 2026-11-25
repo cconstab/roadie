@@ -4,21 +4,20 @@
 //   1. Framing: removes X-Frame-Options and the frame-ancestors directive, so the
 //      site can be shown inside Roadie. The rest of the site's policy is untouched.
 //   2. Caching: answers with Cache-Control: no-cache, so an edit shows up at once.
-//   3. Reload: adds one <script src="/__roadie/reload.js"> to HTML pages. It is
-//      served from the page's own origin, so a script-src 'self' policy allows it.
+//   3. Roadie's page script: adds one <script src="/__roadie/reload.js"> to HTML
+//      pages. It is served from the page's own origin, so a script-src 'self'
+//      policy allows it. The script reloads the page when a file changes and,
+//      when the owner switches on "Edit on page", reports what they click or
+//      type back to Roadie (see preview-page.js). It never edits anything itself.
 //
 // The site's own files and headers are never edited.
+import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 
 const RELOAD_TAG = '<script src="/__roadie/reload.js"></script>';
 
-const RELOAD_JS = `(function () {
-  try { parent.postMessage({ roadie: 'page', path: location.pathname + location.search + location.hash }, '*'); } catch (e) {}
-  var es = new EventSource('/__roadie/events');
-  es.addEventListener('reload', function () { location.reload(); });
-})();
-`;
+const RELOAD_JS = fs.readFileSync(new URL('./preview-page.js', import.meta.url), 'utf8');
 
 // A Cookie header with Roadie's own cookies taken out ('' if nothing is left).
 export function withoutRoadieCookies(header) {

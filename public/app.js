@@ -148,6 +148,9 @@ function render() {
   $('run-btn').textContent = running ? 'Restart' : 'Run';
   $('stop-btn').disabled = !site || preview.state === 'stopped';
   $('reload-btn').disabled = !running;
+  // Needs Roadie's script in the page. A site whose policy blocks it cannot be edited this way.
+  $('edit-btn').disabled = !running || !frameSpoke;
+  if ((!running || !site) && editMode) setEditMode(false);
   const newtab = $('newtab');
   newtab.classList.toggle('disabled', !running);
   if (running) newtab.href = preview.directUrl + framePath; else newtab.removeAttribute('href');
@@ -470,12 +473,24 @@ async function chooseFiles(files, { pasted = false } = {}) {
   // A pasted picture is most often a screenshot for the AI to look at.
   form.elements.mode.value = pasted && picked.every((p) => AI_IMAGE.test(p.file.type)) ? 'ai' : 'site';
   form.elements.folder.value = lastFolder.get(state.site.key) || '';
+  // Replacing a picture clicked on the page: same folder, and the same name when the kind of file matches.
+  const replacing = replaceTarget && picked.length === 1 ? replaceTarget : null;
+  replaceTarget = null;
+  form.dataset.replacing = replacing ? JSON.stringify(replacing) : '';
+  if (replacing) {
+    const slash = replacing.file.lastIndexOf('/');
+    const oldName = replacing.file.slice(slash + 1);
+    const ext = (n) => (n.includes('.') ? n.slice(n.lastIndexOf('.')).toLowerCase() : '');
+    form.elements.mode.value = 'site';
+    form.elements.folder.value = slash < 0 ? '' : replacing.file.slice(0, slash);
+    picked[0].name = ext(oldName) === ext(picked[0].name) ? oldName : oldName.slice(0, oldName.length - ext(oldName).length) + ext(picked[0].name);
+  }
   renderPicked();
   if (!$('files-dialog').open) $('files-dialog').showModal();
   try {
     const { folders, suggested } = await api('GET', '/api/files/folders');
     $('site-folders').replaceChildren(...folders.map((f) => new Option(f, f)));
-    if (!form.elements.folder.value) form.elements.folder.value = suggested;
+    if (!form.elements.folder.value && !replacing) form.elements.folder.value = suggested;
   } catch { /* the folder can still be typed */ }
 }
 
@@ -534,7 +549,7 @@ function renderAttachments() {
   renderChatControls();
 }
 
-$('add-files-btn').addEventListener('click', () => $('file-picker').click());
+$('add-files-btn').addEventListener('click', () => { replaceTarget = null; $('file-picker').click(); });
 $('file-picker').addEventListener('change', (e) => { chooseFiles(e.target.files); e.target.value = ''; });
 $('files-cancel').addEventListener('click', () => $('files-dialog').close());
 $('files-dialog').addEventListener('close', () => { picked.forEach(forget); picked = []; });
@@ -557,7 +572,8 @@ $('files-form').addEventListener('submit', async (e) => {
       return $('chat-input').focus();
     }
     const folder = form.elements.folder.value.trim();
-    lastFolder.set(state.site.key, folder);
+    const replacing = form.dataset.replacing ? JSON.parse(form.dataset.replacing) : null;
+    if (!replacing) lastFolder.set(state.site.key, folder);
     const added = [];
     const ignored = [];
     // One at a time, so a file that fails leaves the rest still listed.
@@ -571,7 +587,15 @@ $('files-form').addEventListener('submit', async (e) => {
     refreshChanges(0);
     if (ignored.length) showProblem(`${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} in a folder the site's .gitignore leaves out, so ${ignored.length === 1 ? 'it' : 'they'} will not be part of a change. Choose another folder if ${ignored.length === 1 ? 'it belongs' : 'they belong'} in the site.`);
     const input = $('chat-input');
-    if (added.length && !input.value.trim()) {
+    if (replacing && added.length) {
+      // Same name: the page already shows the new picture. A new name: the AI must swap the link.
+      if (added[0] !== replacing.file && !input.value.trim()) {
+        input.value = `I added ${added[0]}. Use it in place of ${replacing.file} on ${replacing.page}, and delete ${replacing.file} if nothing else uses it.`;
+        input.focus();
+      }
+      pick = null;
+      renderPointing();
+    } else if (added.length && !input.value.trim()) {
       input.value = `I added ${added.join(', ')}. `;
       input.focus();
     }
@@ -603,6 +627,87 @@ $('chat-input').addEventListener('paste', (e) => {
   e.preventDefault();
   chooseFiles(files, { pasted: true });
 });
+
+// --- edit on page ---------------------------------------------------------------
+
+let editMode = false;
+let pick = null;           // what the owner is pointing at, sent with the next message
+let replaceTarget = null;  // { file, page } while a clicked picture is being replaced
+const EDIT_HINT = 'Click something to point the AI at it. Double-click text to change it. Links and buttons on the page do not work while this is on.';
+
+function sendEditMode() {
+  const frame = $('frame');
+  if (frameUrl && frame.contentWindow) frame.contentWindow.postMessage({ roadie: 'edit', on: editMode }, frameUrl);
+}
+
+function setEditMode(next) {
+  editMode = next;
+  $('edit-btn').setAttribute('aria-pressed', String(editMode));
+  $('edit-bar').hidden = !editMode;
+  $('edit-status').textContent = EDIT_HINT;
+  sendEditMode();
+}
+
+function renderPointing() {
+  const box = $('pointing');
+  box.hidden = !pick;
+  if (!pick) return box.replaceChildren();
+  const what = pick.image ? `the image ${pick.image.file || pick.image.attr}` : `<${pick.tag}>${pick.text ? ` “${pick.text.slice(0, 50)}${pick.text.length > 50 ? '…' : ''}”` : ''}`;
+  const parts = [span(`Pointing at ${what} on ${pick.page}`)];
+  parts[0].title = pick.selector;
+  if (pick.image && pick.image.file) {
+    const swap = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Replace image…' });
+    swap.addEventListener('click', () => { replaceTarget = { file: pick.image.file, page: pick.page }; $('file-picker').click(); });
+    parts.push(swap);
+  }
+  const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: '×', title: 'Stop pointing at this' });
+  drop.setAttribute('aria-label', 'Stop pointing at this');
+  drop.addEventListener('click', () => { pick = null; renderPointing(); });
+  parts.push(drop);
+  box.replaceChildren(...parts);
+}
+
+async function setPick(next) {
+  pick = next;
+  renderPointing();
+  if (!$('chat-input').disabled) $('chat-input').focus();
+  if (next.image && next.image.path) {
+    try {
+      const { file } = await api('POST', '/api/edit/locate', { path: next.image.path });
+      if (pick === next && file) { next.image.file = file; renderPointing(); }
+    } catch { /* pointing still works without the file name */ }
+  }
+}
+
+// Text was changed on the page: have Roadie write it to the site's file, or
+// put a request for the AI in the message box when it cannot tell where.
+async function applyPageText(edit) {
+  const status = $('edit-status');
+  status.textContent = 'Saving…';
+  const reloadFrame = () => { if (frameUrl) $('frame').src = frameUrl + framePath; };
+  try {
+    const result = await api('POST', '/api/edit/text', { where: edit.where, changes: edit.changes, beforeText: edit.beforeText, afterText: edit.afterText });
+    if (result.ok) {
+      status.textContent = `Changed in ${result.files.join(', ')}.`
+        + (result.alsoIn.length ? ` The same words are also in ${result.alsoIn.join(', ')}; ask the AI if ${result.alsoIn.length === 1 ? 'it' : 'they'} should change too.` : '');
+      return refreshChanges(0);
+    }
+    const input = $('chat-input');
+    input.value = (input.value.trim() ? input.value.trim() + '\n\n' : '') + result.ask.text;
+    status.textContent = `${result.ask.why} A request for the AI is in the message box: check it and press Send.`;
+    // The AI is told exactly which element this was.
+    pick = edit.where;
+    renderPointing();
+    if (!input.disabled) input.focus();
+    reloadFrame(); // the page goes back to what the files say
+  } catch (err) {
+    status.textContent = EDIT_HINT;
+    showProblem(err.message);
+    reloadFrame();
+  }
+}
+
+$('edit-btn').addEventListener('click', () => setEditMode(!editMode));
 
 // --- preview width --------------------------------------------------------------
 
@@ -1166,10 +1271,13 @@ $('chat-form').addEventListener('submit', async (e) => {
   const input = $('chat-input');
   const text = input.value.trim();
   if ((!text && !attachments.length) || chatBusy) return;
+  if (!text && pick) return; // pointing needs words: what should happen to it?
   try {
     const images = await Promise.all(attachments.map(async (a) => ({ name: a.name, data: await toBase64(a.blob) })));
-    await api('POST', '/api/chat/send', { text, images });
+    await api('POST', '/api/chat/send', { text, images, ...(pick ? { pick } : {}) });
     input.value = '';
+    pick = null;
+    renderPointing();
     for (const a of attachments) URL.revokeObjectURL(a.url);
     attachments.length = 0;
     renderAttachments();
@@ -1197,10 +1305,18 @@ $('ai-form').addEventListener('submit', async (e) => {
 
 // The previewed page reports where it is, so the path and "open in new tab" follow it.
 window.addEventListener('message', (e) => {
-  if (!frameUrl || e.origin !== frameUrl || !e.data || e.data.roadie !== 'page') return;
-  frameSpoke = true;
-  framePath = typeof e.data.path === 'string' && e.data.path.startsWith('/') ? e.data.path : '/';
-  render();
+  if (!frameUrl || e.origin !== frameUrl || e.source !== $('frame').contentWindow || !e.data) return;
+  const data = e.data;
+  if (data.roadie === 'page') {
+    frameSpoke = true;
+    framePath = typeof data.path === 'string' && data.path.startsWith('/') ? data.path : '/';
+    render();
+    return sendEditMode(); // a page that has just loaded needs telling
+  }
+  // What was clicked or typed only counts while the owner has Edit on page switched on.
+  if (!editMode) return;
+  if (data.roadie === 'pick' && data.pick) setPick(data.pick);
+  else if (data.roadie === 'text' && data.where) applyPageText(data);
 });
 
 // --- events from Roadie ---------------------------------------------------

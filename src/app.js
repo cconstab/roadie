@@ -10,6 +10,7 @@ import { detect } from './detect.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
+import { applyTextEdit, cleanPick, editRequest, locateImage, pickContext, pickLabel } from './pageedit.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
@@ -278,8 +279,31 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
     'POST /api/chat/send': async (body) => {
       const images = cleanChatImages(body.images);
-      (await ensureChat()).send(body.text, { images });
+      // What the owner clicked in the preview goes along as background for the AI.
+      const pick = cleanPick(body.pick);
+      (await ensureChat()).send(body.text, { images, ...(pick ? { context: pickContext(pick), note: pickLabel(pick) } : {}) });
       return { ok: true };
+    },
+
+    // --- Edit on page: what the owner clicked or typed in the preview ---
+    // Which file is the picture they clicked?
+    'POST /api/edit/locate': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      return { file: locateImage(await gitops.listFiles(site.dir), body.path) };
+    },
+    // Text reworded on the page. It is written to a file only when the old text
+    // is found in exactly one place; otherwise the answer is a request for the AI.
+    'POST /api/edit/text': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before editing on the page.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const where = cleanPick(body.where);
+      if (!where) throw new Error('Malformed request.');
+      const result = Array.isArray(body.changes)
+        ? await applyTextEdit({ gitops, dir: site.dir, page: where.page, changes: body.changes })
+        : { ok: false, reason: 'unclear', files: [] };
+      if (result.ok) { flow.notify(); return result; }
+      return { ok: false, ask: editRequest({ where, beforeText: body.beforeText, afterText: body.afterText, result }) };
     },
 
     // --- files the owner adds by hand: images, fonts, documents ---

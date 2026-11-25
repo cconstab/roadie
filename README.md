@@ -166,6 +166,30 @@ file back as it was before the change and leaves the rest alone. The edits it
 removes are kept in `git stash`, so they can be recovered. (In a repo with no
 commits yet there is no stash, and Undo says it will delete the file for good.)
 
+### Edit on page
+
+**Edit on page**, in the preview pane, lets you work on the page itself. While
+it is on, links and buttons on the page do not act; switch it off to use the
+site normally.
+
+- **Click anything** to point at it. A line under the message box says what you
+  are pointing at, and your next message is about that element: "make this
+  bigger", "move this under the photo".
+- **Double-click text** to change it. Type, then press Enter or click elsewhere
+  to keep it, or Escape to put it back. Roadie finds the old words in the site's
+  files and changes only those words. The change shows under Changed files like
+  any other.
+- **Click a picture**, then **Replace image…**, to put another file in its place.
+
+Roadie writes a text change itself only when it finds the old text in exactly
+one place. When the same words appear more than once, or the page's text comes
+from a template or a script, it changes nothing and puts an exact request for
+the AI in the message box for you to send. It is for rewording, not layout:
+to move, resize or restyle something, point at it and ask.
+
+A site whose security policy blocks Roadie's script cannot be edited this way;
+the button stays off.
+
 ### Images and other files
 
 **Add files**, under the chat box, puts images, fonts, PDFs or any other file
@@ -199,7 +223,9 @@ proxy, which changes three things and nothing else:
 - it removes `X-Frame-Options` and the `frame-ancestors` part of the
   Content-Security-Policy, so the site can be shown inside Roadie;
 - it marks responses `no-cache`, so an edit shows up straight away;
-- it adds one script tag to each page, which reloads the page when files change.
+- it adds one script tag to each page. The script reloads the page when files
+  change and, while **Edit on page** is on, reports what you click and type to
+  Roadie. It never changes a file itself.
 
 **Open in new tab** bypasses the proxy, so there you see the site exactly as it
 serves itself.
