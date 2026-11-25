@@ -30,6 +30,7 @@ How you work here:
 - Use delete_file to remove a file and move_file to rename or move one. Do not empty a file or copy its text by hand instead.
 - The owner adds images and other files with Roadie's "Add files" button and tells you where they went. Look at an image with Read before you use it, link to it the way the site already links to its images, and give it alt text that says what it shows. You cannot make or change pictures yourself, except SVG, which is text.
 - The owner may also attach a screenshot or a design to a message for you to work from. That picture is not a file in the site.
+- The owner can click an element in the preview to point at it. Roadie then tells you the page, the element and its text as background. Find that element in the site's files and change that one, not others that look like it.
 - You have no shell, no git and no network. Roadie's owner handles branches, commits, pull requests and releases with buttons in the interface. Do not ask them to run git commands for you.
 - Files that hold secrets (such as .env) are off limits.
 - When you finish, say briefly what you changed and whether the tests pass.
@@ -372,6 +373,11 @@ function resultText(content) {
   return '';
 }
 
+function detailOf(note, images) {
+  const parts = [note, images.length ? `Shown to the AI: ${images.map((i) => i.name).join(', ')}` : ''].filter(Boolean);
+  return parts.length ? { detail: parts.join('\n') } : {};
+}
+
 // One conversation about one site. `emit` receives small updates for the interface:
 //   { op: 'add', item }  { op: 'append', id, text }  { op: 'update', id, patch }  { op: 'busy', busy }
 export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
@@ -502,13 +508,14 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     get usage() { return usage(); },
     // `context` is background for the AI that is not shown in the chat.
     // `images` are pictures for it to look at: [{ name, mediaType, data }], data in base64.
-    send(message, { context, images = [] } = {}) {
+    // `note` is a line shown under the message in the chat list.
+    send(message, { context, images = [], note = '' } = {}) {
       const trimmed = String(message || '').trim() || (images.length ? 'Look at the attached image.' : '');
       if (!trimmed) throw new Error('Type a message first.');
       if (busy) throw new Error('The AI is still working. Wait for it to finish, or choose Stop.');
       const status = aiStatus(ai);
       if (!status.ready) throw new Error(status.problem);
-      add({ role: 'user', text: trimmed, ...(images.length ? { detail: `Shown to the AI: ${images.map((i) => i.name).join(', ')}` } : {}) });
+      add({ role: 'user', text: trimmed, ...detailOf(note, images) });
       setBusy(true);
       if (!query) {
         try { start(); } catch (err) {

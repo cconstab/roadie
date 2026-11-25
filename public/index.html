@@ -47,6 +47,7 @@
       <form id="chat-form" class="composer">
         <label for="chat-input" class="sr">Message to the AI</label>
         <textarea id="chat-input" rows="3" placeholder="Describe the change you want…" disabled></textarea>
+        <div id="pointing" class="pointing" hidden></div>
         <ul id="attachments" class="attachments" aria-label="Images to show the AI" hidden></ul>
         <p id="chat-usage" class="muted usage" hidden></p>
         <div class="composer-actions">
@@ -65,6 +66,7 @@
         <span id="preview-status" class="pill">no site</span>
         <span id="preview-path" class="path"></span>
         <span class="spacer"></span>
+        <button type="button" id="edit-btn" aria-pressed="false" title="Click things in the preview to point the AI at them, and double-click text to change it" disabled>Edit on page</button>
         <label class="sr" for="preview-width">Preview width</label>
         <select id="preview-width" title="How wide the preview is">
           <option value="">Full width</option>
@@ -78,6 +80,7 @@
         <a id="newtab" class="button disabled" target="_blank" rel="noopener">Open in new tab</a>
         <button type="button" id="log-btn" aria-expanded="false">Log</button>
       </div>
+      <p id="edit-bar" class="edit-bar" hidden><span id="edit-status"></span></p>
       <div class="preview-body">
         <iframe id="frame" title="Site preview" hidden
           sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>
