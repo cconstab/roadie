@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { z } from 'zod';
 import {
-  ALLOWED_TOOLS, STANDING_INSTRUCTIONS, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, searchFiles,
+  ALLOWED_TOOLS, NO_CHANGE_NOTE, STANDING_INSTRUCTIONS, TOOL_ALIASES, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, searchFiles,
 } from '../src/agent.js';
 import { cleanAi, createConfig } from '../src/config.js';
 import { isSecretPath } from '../src/guards.js';
@@ -91,6 +91,24 @@ test('tools outside the short list are refused by name', (t) => {
   for (const tool of ['mcp__roadie__list_files', 'mcp__roadie__search_files', 'mcp__roadie__run_tests', 'list_files']) {
     assert.equal(checkToolUse(dir, tool, {}), null, tool);
   }
+});
+
+test('a slightly wrong tool name is sent to the real tool, under the same checks', async (t) => {
+  const s = site(t);
+  const options = agentOptions({ sdk: fakeSdk(), z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}) });
+  assert.equal(options.toolAliases, TOOL_ALIASES);
+  // Seen from a local model: Roadie's prefix put on a built-in tool.
+  for (const [wrong, right] of [['mcp__roadie__read', 'Read'], ['mcp__roadie__edit', 'Edit'], ['mcp__roadie__write', 'Write'], ['read_file', 'Read'], ['mcp__roadie__write_file', 'Write'], ['run_tests', 'mcp__roadie__run_tests']]) {
+    assert.equal(TOOL_ALIASES[wrong], right, wrong);
+  }
+  // An alias only ever leads to a tool on the allowed list: none opens a new door.
+  for (const [wrong, right] of Object.entries(TOOL_ALIASES)) assert.ok(ALLOWED_TOOLS.includes(right), `${wrong} -> ${right}`);
+  // Whichever name the hook is shown, the path rules are the same.
+  assert.equal(checkToolUse(s.dir, 'mcp__roadie__read', { file_path: 'index.html' }), null);
+  assert.match(checkToolUse(s.dir, 'mcp__roadie__read', { file_path: '.env' }), /secret/i);
+  assert.match(checkToolUse(s.dir, 'mcp__roadie__write', { file_path: '/tmp/elsewhere.txt' }), /outside|inside/i);
+  assert.match(checkToolUse(s.dir, 'mcp__roadie__read', {}), /./, 'no path, no reading');
+  assert.match(checkToolUse(s.dir, 'constructor', {}), /not available here/);
 });
 
 test('the options handed to the SDK lock the agent down', async (t) => {
@@ -252,6 +270,40 @@ test('a chat turn streams text and tool activity to the interface', async (t) =>
   await settle();
   assert.equal(sdk.queries.length, 1);
   assert.throws(() => chat.send('   '), /Type a message/);
+});
+
+test('a reply that claims a change without making one is flagged', async (t) => {
+  const s = site(t);
+  const say = (text) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text }] } });
+  const use = (id, name, input) => ({ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'tool_use', id, name, input }] } });
+  const got = (id, is_error = false) => ({ type: 'user', parent_tool_use_id: null, message: { content: [{ type: 'tool_result', tool_use_id: id, is_error, content: 'x' }] } });
+  const end = { type: 'result', subtype: 'success', is_error: false };
+  const replies = {
+    // What the owner saw: reads failed, tests ran, and the AI reported an edit it never made.
+    claimed: [use('a', 'mcp__roadie__run_tests', {}), got('a'), say('I have updated the rotator content list in js/script.js.'), end],
+    failed: [use('b', 'Edit', { file_path: 'index.html' }), got('b', true), say('The heading has been changed to red.'), end],
+    edited: [use('c', 'Edit', { file_path: 'index.html' }), got('c'), say('I have updated the heading.'), end],
+    aliased: [use('d', 'mcp__roadie__write', { file_path: 'new.html' }), got('d'), say("I've added the page."), end],
+    answered: [say('The heading is in index.html. I can change it if you like.'), end],
+  };
+  const sdk = fakeSdk((content) => replies[content]);
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const chat = createChat({ sdk, z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), emit: () => {} });
+  t.after(() => chat.close());
+  const flagged = async (message) => {
+    const from = chat.items.length;
+    chat.send(message);
+    await settle();
+    return chat.items.slice(from).some((i) => i.role === 'note' && i.text === NO_CHANGE_NOTE);
+  };
+  assert.equal(await flagged('claimed'), true);
+  assert.equal(await flagged('failed'), true, 'an edit that was refused is not a change');
+  assert.equal(await flagged('edited'), false);
+  assert.equal(await flagged('aliased'), false, 'a change made under a mistaken tool name still counts');
+  assert.equal(await flagged('answered'), false, 'an answer that claims nothing is left alone');
+  assert.equal(await flagged('claimed'), true, 'an earlier real edit does not excuse a later reply');
+  assert.equal(chat.items.find((i) => i.role === 'tool' && i.text.startsWith('Write')).text, 'Write new.html', 'shown by its real name');
 });
 
 test('errors and Stop are reported plainly', async (t) => {

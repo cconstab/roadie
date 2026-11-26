@@ -27,6 +27,7 @@ Standing instructions:
 
 How you work here:
 - You can only read and edit files inside the site's folder. Use list_files and search_files to find things.
+- To read, change or create a file use the tools named exactly Read, Edit and Write. Each takes file_path.
 - Use delete_file to remove a file and move_file to rename or move one. Do not empty a file or copy its text by hand instead.
 - The owner adds images and other files with Roadie's "Add files" button and tells you where they went. Look at an image with Read before you use it, link to it the way the site already links to its images, and give it alt text that says what it shows. You cannot make or change pictures yourself, except SVG, which is text.
 - The owner may also attach a screenshot or a design to a message for you to work from. That picture is not a file in the site.
@@ -49,9 +50,21 @@ export const ALLOWED_TOOLS = [...Object.keys(FILE_TOOLS), ...ROADIE_TOOLS];
 // Roadie tools that name files: which inputs hold the paths.
 const PATH_INPUTS = { delete_file: ['path'], move_file: ['from', 'to'] };
 
+// Names a model may use by mistake, and the tool each one means. Local models
+// above all shorten Roadie's tool names, or put Roadie's prefix on Read, Edit
+// and Write ("mcp__roadie__read"). The SDK sends such a call to the real tool.
+export const TOOL_ALIASES = Object.fromEntries([
+  ...ROADIE_NAMES.map((name) => [name, `mcp__${SERVER}__${name}`]),
+  ...Object.keys(FILE_TOOLS).flatMap((tool) => {
+    const low = tool.toLowerCase();
+    return [low, `${low}_file`, `${tool}File`, `mcp__${SERVER}__${low}`, `mcp__${SERVER}__${low}_file`, `mcp__${SERVER}__${tool}`].map((alias) => [alias, tool]);
+  }),
+]);
+
 // Returns null when the call may go ahead, or the reason it may not.
 export function checkToolUse(siteDir, toolName, input) {
-  if (FILE_TOOLS[toolName]) {
+  toolName = Object.hasOwn(TOOL_ALIASES, toolName) ? TOOL_ALIASES[toolName] : toolName;
+  if (Object.hasOwn(FILE_TOOLS, toolName)) {
     const verdict = checkSitePath(siteDir, input && input[FILE_TOOLS[toolName]]);
     return verdict.ok ? null : verdict.reason;
   }
@@ -225,8 +238,8 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
       }],
     },
     mcpServers: { [SERVER]: roadieTools({ sdk, z, gitops, site, runTests }) },
-    // Some models call Roadie's tools by their short names; send those to the real ones.
-    toolAliases: Object.fromEntries(ROADIE_NAMES.map((name) => [name, `mcp__${SERVER}__${name}`])),
+    // Some models get a tool's name slightly wrong; send those calls to the real tool.
+    toolAliases: TOOL_ALIASES,
     strictMcpConfig: true,                   // no MCP servers from this machine's config
     settingSources: [],                      // no user or project settings, hooks or CLAUDE.md
     skills: [],
@@ -354,6 +367,7 @@ function toolLabel(siteDir, name, input = {}) {
     const r = path.relative(fs.realpathSync(siteDir), path.resolve(siteDir, p));
     return r && !r.startsWith('..') ? r.split(path.sep).join('/') : p;
   };
+  name = Object.hasOwn(TOOL_ALIASES, name) ? TOOL_ALIASES[name] : name; // shown by its real name
   switch (name) {
     case 'Read': return `Read ${rel(input.file_path)}`;
     case 'Edit': return `Edit ${rel(input.file_path)}`;
@@ -380,6 +394,14 @@ function detailOf(note, images) {
 
 // One conversation about one site. `emit` receives small updates for the interface:
 //   { op: 'add', item }  { op: 'append', id, text }  { op: 'update', id, patch }  { op: 'busy', busy }
+// Tools that change the site's files.
+const CHANGING_TOOLS = new Set(['Edit', 'Write', `mcp__${SERVER}__delete_file`, `mcp__${SERVER}__move_file`]);
+const changesFiles = (name) => CHANGING_TOOLS.has(Object.hasOwn(TOOL_ALIASES, name) ? TOOL_ALIASES[name] : name);
+// Words an AI uses when it reports a change as made. Weaker models sometimes
+// say this without having edited anything.
+const CLAIMS_A_CHANGE = /\b(?:I(?: have|'ve|’ve)?(?: now| also| just| successfully)* (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewrote|rewritten|inserted|applied|implemented|made the change)|(?:has|have) been (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewritten|inserted|applied))\b/i;
+export const NO_CHANGE_NOTE = 'Roadie: the AI says it made a change, but it did not change any file in this reply. Nothing on the site is different. Ask it to make the change again, or try a stronger model in AI settings.';
+
 export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   const items = [];
   let nextId = 1;
@@ -391,6 +413,9 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   let textItem = null;      // the assistant text item being streamed
   let streamedText = false; // did the current text block arrive as deltas?
   const toolItems = new Map();
+  const changing = new Set(); // ids of running tool calls that would change a file
+  let turnFrom = 0;           // where this reply's items start
+  let turnChanged = false;    // did a file-changing tool succeed in this reply?
   let stderrTail = '';
   let info = null;          // what the SDK says it started with: { model, tools }
   // Tokens and estimated cost for this chat. Each result from the SDK carries
@@ -444,6 +469,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         if (block.type === 'text' && block.text && !streamedText && !m.error) add({ role: 'assistant', text: block.text });
         if (block.type === 'tool_use') {
           toolItems.set(block.id, add({ role: 'tool', text: toolLabel(site.dir, block.name, block.input), status: 'running' }));
+          if (changesFiles(block.name)) changing.add(block.id);
         }
       }
       textItem = null;
@@ -454,6 +480,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         if (block.type !== 'tool_result') continue;
         const item = toolItems.get(block.tool_use_id);
         if (!item) continue;
+        if (!block.is_error && changing.has(block.tool_use_id)) turnChanged = true;
         update(item, block.is_error
           ? { status: 'failed', detail: resultText(block.content).slice(0, 600) }
           : { status: 'done' });
@@ -469,6 +496,12 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         add({ role: 'error', text: why });
       }
       if (interrupted) add({ role: 'note', text: 'Stopped.' });
+      // The AI's own account is not proof: say so when it reports a change it never made.
+      const said = items.slice(turnFrom).filter((i) => i.role === 'assistant').map((i) => i.text).join('\n');
+      if (m.subtype === 'success' && !interrupted && !turnChanged && CLAIMS_A_CHANGE.test(said)) add({ role: 'note', text: NO_CHANGE_NOTE });
+      changing.clear();
+      turnChanged = false;
+      turnFrom = items.length;
       interrupted = false;
       setBusy(false);
     }
