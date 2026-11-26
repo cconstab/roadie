@@ -462,6 +462,12 @@ function renderUnreleased(data) {
 $('tab-change').addEventListener('click', () => showTab('change'));
 $('tab-release').addEventListener('click', () => showTab('release'));
 
+// The deployed site itself, not the address Roadie asks for its version.
+function deployedSite(h) {
+  if (h.site) return h.site;
+  try { return new URL(h.url).origin + '/'; } catch { return h.url; }
+}
+
 const isPicture = (name) => /\.(png|jpe?g|gif|webp|avif|svg|ico|bmp)$/i.test(name);
 
 async function undoFile(f) {
@@ -1379,7 +1385,7 @@ function renderChange() {
     const h = change[which];
     if (!h || !(h.live || h.polling || h.timedOut)) continue;
     const box = document.createElement('span');
-    if (h.live) box.append(span(`${which === 'staging' ? 'Staging' : 'Production'} is live on ${h.seen || h.waitingFor}. `, 'ok'), link(h.url.replace(/\/[^/]*$/, '') || h.url, 'Open it'));
+    if (h.live) box.append(span(`${which === 'staging' ? 'Staging' : 'Production'} is live on ${h.seen || h.waitingFor}. `, 'ok'), link(deployedSite(h), 'Open it'));
     else if (h.polling) box.append(`Waiting for ${which} to report ${h.waitingFor}. `, h.error ? span(h.error, 'bad') : (h.seen ? `It is on ${h.seen} now.` : ''), ' Deploys usually take a few minutes.');
     else if (h.timedOut) box.append(span(`${which} never reported ${h.waitingFor}. It is on ${h.seen || 'an unknown build'}. Check the deploy on the server.`, 'bad'));
     if (box.childNodes.length) parts.push(box);
