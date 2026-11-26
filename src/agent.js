@@ -448,6 +448,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emi
   const changing = new Set(); // ids of running tool calls that would change a file
   let turnFrom = 0;           // where this reply's items start
   let turnChanged = false;    // did a file-changing tool succeed in this reply?
+  let turnTools = 0;          // how many tools this reply called
   let stderrTail = '';
   let info = null;          // what the SDK says it started with: { model, tools }
   // Tokens and estimated cost for this chat. Each result from the SDK carries
@@ -501,6 +502,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emi
         if (block.type === 'text' && block.text && !streamedText && !m.error) add({ role: 'assistant', text: block.text });
         if (block.type === 'tool_use') {
           toolItems.set(block.id, add({ role: 'tool', text: toolLabel(site.dir, block.name, block.input), status: 'running' }));
+          turnTools++;
           if (changesFiles(block.name)) changing.add(block.id);
         }
       }
@@ -530,9 +532,11 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emi
       if (interrupted) add({ role: 'note', text: 'Stopped.' });
       // The AI's own account is not proof: say so when it reports a change it never made.
       const said = items.slice(turnFrom).filter((i) => i.role === 'assistant').map((i) => i.text).join('\n');
-      if (m.subtype === 'success' && !interrupted && !turnChanged && CLAIMS_A_CHANGE.test(said)) add({ role: 'note', text: NO_CHANGE_NOTE });
+      // A reply that used no tool at all is talk ("last time I changed…"), not a claim about this turn.
+      if (m.subtype === 'success' && !interrupted && turnTools > 0 && !turnChanged && CLAIMS_A_CHANGE.test(said)) add({ role: 'note', text: NO_CHANGE_NOTE });
       changing.clear();
       turnChanged = false;
+      turnTools = 0;
       turnFrom = items.length;
       interrupted = false;
       setBusy(false);

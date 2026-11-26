@@ -17,7 +17,7 @@ import { openSite, parseRepo } from './sites.js';
 import { blankKind, starterFileList, writeStarter } from './starter.js';
 import { capturePage } from './screenshot.js';
 import { runTests } from './tests.js';
-import { MAX_UPLOAD_BYTES, addFile, cleanChatImages, cleanUploadPath, imageType, uploadFolders } from './uploads.js';
+import { MAX_UPLOAD_BYTES, addFile, browseFiles, cleanChatImages, cleanUploadPath, imageType, removeFile, uploadFolders } from './uploads.js';
 import { protectRoadie, sandboxAvailable } from './sandbox.js';
 import { createRestartGuard, needsRestart, watchSite } from './watcher.js';
 
@@ -395,6 +395,20 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       const made = newPage({ dir: site.dir, files: await gitops.listFiles(site.dir), from: String(body.from || ''), name: body.name, title: body.title });
       flow.notify();
       return made;
+    },
+    // Every file in the site, for the owner to look through.
+    'GET /api/files': async () => {
+      if (!site) throw new Error('Open a site first.');
+      return { files: browseFiles(site.dir, await gitops.listFiles(site.dir)) };
+    },
+    // The owner deletes one file by hand. It shows under Changed files, where Undo brings it back.
+    'POST /api/files/delete': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before deleting a file.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const removed = removeFile(site.dir, String(body.path || ''));
+      flow.notify();
+      return removed;
     },
     'GET /api/files/folders': async () => {
       if (!site) throw new Error('Open a site first.');

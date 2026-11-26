@@ -303,6 +303,8 @@ test('a reply that claims a change without making one is flagged', async (t) => 
     edited: [use('c', 'Edit', { file_path: 'index.html' }), got('c'), say('I have updated the heading.'), end],
     aliased: [use('d', 'mcp__roadie__write', { file_path: 'new.html' }), got('d'), say("I've added the page."), end],
     answered: [say('The heading is in index.html. I can change it if you like.'), end],
+    // Seen with a real model: recounting an earlier change, with no tool used, is not a claim.
+    recounted: [say('Last time I updated the heading in index.html, as you asked.'), end],
   };
   const sdk = fakeSdk((content) => replies[content]);
   process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
@@ -320,6 +322,7 @@ test('a reply that claims a change without making one is flagged', async (t) => 
   assert.equal(await flagged('edited'), false);
   assert.equal(await flagged('aliased'), false, 'a change made under a mistaken tool name still counts');
   assert.equal(await flagged('answered'), false, 'an answer that claims nothing is left alone');
+  assert.equal(await flagged('recounted'), false, 'talk about an earlier change, with no tool used, is left alone');
   assert.equal(await flagged('claimed'), true, 'an earlier real edit does not excuse a later reply');
   assert.equal(chat.items.find((i) => i.role === 'tool' && i.text.startsWith('Write')).text, 'Write new.html', 'shown by its real name');
 });

@@ -8,7 +8,7 @@ import { agentOptions, checkToolUse, createChat } from '../src/agent.js';
 import { createApp } from '../src/app.js';
 import { cleanAi, createConfig } from '../src/config.js';
 import { createGitOps } from '../src/gitops.js';
-import { addFile, cleanChatImages, cleanUploadPath, imageType, moveFile, removeFile, sniffImage, uploadFolders } from '../src/uploads.js';
+import { addFile, cleanChatImages, cleanUploadPath, imageType, moveFile, removeFile, sniffImage, uploadFolders, browseFiles } from '../src/uploads.js';
 import { fakeGitOps, tmpDir, writeFiles } from './helpers.js';
 
 // The smallest real PNG: one transparent pixel.
@@ -356,4 +356,12 @@ test('undo through the API only touches a file that is listed as changed, and no
 
   assert.deepEqual((await call('POST', '/api/changes/undo', { path: 'index.html' })).data, { ok: true, stashed: true });
   assert.deepEqual(restored, [['HEAD', 'index.html']]);
+});
+
+test('the file browser lists the site\'s files with sizes, and never a secret or a link out', (t) => {
+  const dir = tmpDir(t);
+  writeFiles(dir, { 'index.html': '<h1>hi</h1>', 'images/logo.png': 'PNGDATA', '.env': 'KEY=1', 'docs/readme.md': 'x' });
+  try { fs.symlinkSync(path.join(dir, '.env'), path.join(dir, 'innocent.txt')); } catch { /* Windows may not allow links; the file is then simply absent */ }
+  const listed = browseFiles(dir, ['index.html', 'images/logo.png', '.env', 'innocent.txt', 'gone.txt', 'docs', '../outside.txt']);
+  assert.deepEqual(listed, [{ path: 'images/logo.png', size: 7, image: true }, { path: 'index.html', size: 11, image: false }]);
 });

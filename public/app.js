@@ -243,7 +243,9 @@ function addChatItem(item) {
 function syncChat(chat) {
   const ids = new Set(chat.items.map((i) => i.id));
   for (const [id, entry] of chatItems) {
-    if (!ids.has(id)) { entry.el.remove(); chatItems.delete(id); }
+    // Roadie's own notes ("local-…") are not in the server's list; they stay until the chat is cleared.
+    const local = String(id).startsWith('local-') && chat.items.length > 0;
+    if (!ids.has(id) && !local) { entry.el.remove(); chatItems.delete(id); }
   }
   for (const item of chat.items) {
     const entry = chatItems.get(item.id);
@@ -300,6 +302,7 @@ function renderChatControls() {
   $('ai-label').className = 'pill' + (ai && !ai.status.ready ? ' failed' : '');
   $('chat-input').disabled = !ready;
   $('add-files-btn').disabled = !site;
+  $('browse-btn').disabled = !site;
   $('send-btn').disabled = !ready || chatBusy;
   $('stop-chat').hidden = !chatBusy;
   $('new-chat-btn').disabled = chatBusy || chatItems.size === 0;
@@ -666,6 +669,52 @@ $('chat-input').addEventListener('paste', (e) => {
   e.preventDefault();
   chooseFiles(files, { pasted: true });
 });
+
+// --- all the site's files ---------------------------------------------------------
+
+let browseFilesList = [];
+
+function renderBrowse() {
+  const want = $('browse-filter').value.trim().toLowerCase();
+  const shown = browseFilesList.filter((f) => f.path.toLowerCase().includes(want));
+  $('browse-count').textContent = `${shown.length} of ${browseFilesList.length} files. Ignored files and secrets are not listed.`;
+  $('browse-list').replaceChildren(...shown.slice(0, 400).map((f) => {
+    const li = document.createElement('li');
+    let thumb;
+    if (f.image) { thumb = Object.assign(document.createElement('img'), { src: `/api/file?path=${encodeURIComponent(f.path)}`, alt: '', loading: 'lazy' }); }
+    else thumb = span((f.path.includes('.') ? f.path.split('.').pop() : 'file').slice(0, 5), 'no-thumb');
+    const box = document.createElement('div');
+    box.append(span(f.path, 'name'), Object.assign(document.createElement('small'), { textContent: fileSize(f.size) }));
+    const page = sitePageList.find((p) => p.file === f.path);
+    const show = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Show', hidden: !page || !frameUrl, title: 'Show this page in the preview' });
+    show.addEventListener('click', () => { $('browse-dialog').close(); goToPage(page.path); });
+    const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Delete' });
+    drop.addEventListener('click', async () => {
+      if (!confirm(`Delete ${f.path} from the site?\n\nA file that was already part of the site then shows under Changed files, where Undo brings it back. A file you added since the last change is gone for good.`)) return;
+      $('browse-error').hidden = true;
+      try {
+        await api('POST', '/api/files/delete', { path: f.path });
+        browseFilesList = browseFilesList.filter((x) => x !== f);
+        renderBrowse();
+        refreshChanges(0);
+      } catch (err) { $('browse-error').textContent = err.message; $('browse-error').hidden = false; }
+    });
+    li.append(thumb, box, show, drop);
+    return li;
+  }));
+}
+
+$('browse-btn').addEventListener('click', async () => {
+  try {
+    [browseFilesList, sitePageList] = await Promise.all([api('GET', '/api/files').then((r) => r.files), api('GET', '/api/pages').then((r) => r.pages)]);
+  } catch (err) { return showProblem(err.message); }
+  $('browse-filter').value = '';
+  $('browse-error').hidden = true;
+  renderBrowse();
+  $('browse-dialog').showModal();
+});
+$('browse-filter').addEventListener('input', renderBrowse);
+$('browse-close').addEventListener('click', () => $('browse-dialog').close());
 
 // --- the address box above the preview ------------------------------------------
 

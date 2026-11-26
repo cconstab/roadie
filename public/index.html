@@ -99,6 +99,8 @@
       <div class="pane-head">
         <h2 id="files-h">Changed files</h2>
         <span id="changes-count" class="pill" hidden></span>
+        <span class="spacer"></span>
+        <button type="button" id="browse-btn" title="Look through every file in the site" disabled>All files</button>
       </div>
       <div id="changes" class="changes-list"></div>
     </section>
@@ -132,6 +134,18 @@
         <button type="submit" id="settings-save" class="primary">Save and run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="browse-dialog" class="wide">
+    <h2>Files in this site</h2>
+    <label class="sr" for="browse-filter">Filter by name</label>
+    <input id="browse-filter" type="search" placeholder="Filter by name, for example: images or .css" spellcheck="false" autocomplete="off">
+    <p id="browse-count" class="muted"></p>
+    <ul id="browse-list" class="upload-list browse-list"></ul>
+    <p id="browse-error" class="warning" hidden></p>
+    <div class="actions">
+      <button type="button" id="browse-close">Close</button>
+    </div>
   </dialog>
 
   <dialog id="page-dialog">
