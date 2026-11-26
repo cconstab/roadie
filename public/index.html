@@ -64,7 +64,11 @@
       <div class="pane-head">
         <h2 id="preview-h">Preview</h2>
         <span id="preview-status" class="pill">no site</span>
-        <span id="preview-path" class="path"></span>
+        <form id="path-form" class="path-form">
+          <label class="sr" for="preview-path">Page address</label>
+          <input id="preview-path" class="path" list="page-list" autocomplete="off" spellcheck="false" placeholder="/" title="The page showing. Type an address, or pick one of the site's pages, and press Enter." disabled>
+          <datalist id="page-list"></datalist>
+        </form>
         <span class="spacer"></span>
         <button type="button" id="edit-btn" aria-pressed="false" title="Click things in the preview to point the AI at them, and double-click text to change it" disabled>Edit on page</button>
         <label class="sr" for="preview-width">Preview width</label>

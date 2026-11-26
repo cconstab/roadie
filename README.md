@@ -166,6 +166,16 @@ file back as it was before the change and leaves the rest alone. The edits it
 removes are kept in `git stash`, so they can be recovered. (In a repo with no
 commits yet there is no stash, and Undo says it will delete the file for good.)
 
+### Going to another page
+
+The box under the preview's buttons shows the address of the page on screen.
+Click it to pick one of the site's pages from a list, or type an address such
+as `/about.html` and press Enter. This works while **Edit on page** is on, when
+the page's own links do not.
+
+The list is made from the HTML files in the site. A site that builds its pages
+from templates may serve addresses that are not in the list; type those.
+
 ### Edit on page
 
 **Edit on page**, in the preview pane, lets you work on the page itself. While

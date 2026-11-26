@@ -10,7 +10,7 @@ import { detect } from './detect.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
-import { applyTextEdit, cleanPick, editRequest, locateImage, pickContext, pickLabel } from './pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, locateImage, pickContext, pickLabel, sitePages } from './pageedit.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
@@ -307,6 +307,11 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     },
 
     // --- files the owner adds by hand: images, fonts, documents ---
+    // The site's pages, for the address box above the preview.
+    'GET /api/pages': async () => {
+      if (!site) throw new Error('Open a site first.');
+      return { pages: sitePages(await gitops.listFiles(site.dir)) };
+    },
     'GET /api/files/folders': async () => {
       if (!site) throw new Error('Open a site first.');
       return uploadFolders(await gitops.listFiles(site.dir));

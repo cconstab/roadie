@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createApp } from '../src/app.js';
 import { createConfig } from '../src/config.js';
-import { applyTextEdit, cleanPick, editRequest, flexPattern, locateImage, pageFiles, pickContext, pickLabel } from '../src/pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, flexPattern, locateImage, pageFiles, pickContext, pickLabel, sitePages } from '../src/pageedit.js';
 import { createPreviewProxy } from '../src/proxy.js';
 import { fakeGitOps, tmpDir, writeFiles } from './helpers.js';
 
@@ -226,4 +226,21 @@ test('edits from the page go through the API: applied when clear, handed to the 
   assert.match(turns[0], /CSS path: body > h1/);
   const { chat } = (await call('GET', '/api/state')).data;
   assert.deepEqual([chat.items[0].text, chat.items[0].detail], ['Make this bigger', 'Pointing at <h1> “Bakery” on /']);
+});
+
+test('the pages of a site are listed as preview addresses, home first', () => {
+  const files = ['README.md', 'server.js', 'public/index.html', 'public/about.html', 'public/blog/index.html', 'public/blog/first post.html',
+    'public/css/styles.css', 'public/404.html', 'node_modules/x/index.html', 'docs/index.html', '.github/page.html', 'public/dist/built.html'];
+  assert.deepEqual(sitePages(files), [
+    { path: '/', file: 'public/index.html' },
+    { path: '/404.html', file: 'public/404.html' },
+    { path: '/about.html', file: 'public/about.html' },
+    { path: '/blog/', file: 'public/blog/index.html' },
+    { path: '/blog/first%20post.html', file: 'public/blog/first post.html' },
+  ]);
+  // A site kept at the top of the repo.
+  assert.deepEqual(sitePages(['index.html', 'contact.htm', 'js/app.js']).map((p) => p.path), ['/', '/contact.htm']);
+  // No home page: every page is still offered.
+  assert.deepEqual(sitePages(['pages/a.html']).map((p) => p.path), ['/pages/a.html']);
+  assert.deepEqual(sitePages([]), []);
 });

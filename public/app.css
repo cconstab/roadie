@@ -136,7 +136,10 @@ pre.plan { margin: 0 0 .6rem; padding: .5rem .6rem; background: var(--code-bg); 
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
 }
-.path { color: var(--muted); font-family: ui-monospace, monospace; font-size: .85em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14rem; }
+/* The address box has a row of its own under the preview's buttons, like a browser's. */
+.path-form { flex: 1 1 100%; order: 10; display: flex; }
+.path { font-family: ui-monospace, monospace; font-size: .85em; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .2rem .4rem; width: 100%; min-width: 0; }
+.path:disabled { opacity: .5; }
 .pill { padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: .85em; white-space: nowrap; }
 .pill.running { color: var(--ok); border-color: var(--ok); }
 .pill.starting { color: var(--warn); border-color: var(--warn); }
@@ -234,6 +237,8 @@ dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3r
 .choice input { width: auto; }
 .sub { margin-left: 1.5rem; display: grid; gap: .5rem; }
 .sub[hidden] { display: none; }
+/* "hidden" always wins, also over a rule that sets display for a visible state. */
+[hidden] { display: none !important; }
 .sub p { margin: 0; }
 .row { display: flex; gap: .4rem; }
 .row select { flex: 1; font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: .3rem; min-width: 0; }

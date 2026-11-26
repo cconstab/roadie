@@ -150,6 +150,29 @@ export async function applyTextEdit({ gitops, dir, page, changes }) {
   return { ok: true, files: [...edits.keys()].sort(), alsoIn: [...alsoIn].filter((f) => !edits.has(f)).sort() };
 }
 
+// The pages of the site, as addresses for the preview: [{ path, file }], home first.
+// A guess from the file names: the folder holding the home page is taken as the
+// web root, "x/index.html" is served at "/x/", and other pages under their own name.
+export function sitePages(files) {
+  const pages = files.filter((f) => /\.html?$/i.test(f) && !isSecretPath(f) && !SKIP.test(f) && !f.split('/').some((p) => p.startsWith('.')));
+  // The home page: the least deeply nested index.html and, between equals
+  // ("public/" and "docs/"), the one whose folder holds the most pages.
+  const folder = (f) => (f.includes('/') ? f.slice(0, f.lastIndexOf('/') + 1) : '');
+  const under = (dir) => pages.filter((f) => f.startsWith(dir)).length;
+  const home = pages.filter((f) => /(^|\/)index\.html?$/i.test(f))
+    .sort((a, b) => a.split('/').length - b.split('/').length || under(folder(b)) - under(folder(a)) || a.localeCompare(b))[0];
+  const root = home ? folder(home) : '';
+  const out = [];
+  for (const file of pages) {
+    if (!file.startsWith(root)) continue;
+    const rel = file.slice(root.length).replace(/(^|\/)index\.html?$/i, '$1');
+    out.push({ path: '/' + rel.split('/').map(encodeURIComponent).join('/'), file });
+  }
+  const depth = (p) => p.path.split('/').length - (p.path.endsWith('/') ? 1 : 0);
+  out.sort((a, b) => depth(a) - depth(b) || a.path.localeCompare(b.path));
+  return out.filter((p, i) => out.findIndex((q) => q.path === p.path) === i).slice(0, 300);
+}
+
 // Which file in the site is the picture at this address? Null unless exactly one fits.
 export function locateImage(files, urlPath) {
   let p = '';
