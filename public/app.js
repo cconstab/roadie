@@ -303,6 +303,7 @@ function renderChatControls() {
   $('chat-input').disabled = !ready;
   $('add-files-btn').disabled = !site;
   $('browse-btn').disabled = !site;
+  $('tab-release').disabled = !site;
   $('send-btn').disabled = !ready || chatBusy;
   $('stop-chat').hidden = !chatBusy;
   $('new-chat-btn').disabled = chatBusy || chatItems.size === 0;
@@ -353,50 +354,113 @@ function renderChanges(files) {
     p.textContent = state.site ? 'No changes yet. The site matches its last commit.' : 'Open a site to see its changes.';
     return box.replaceChildren(p);
   }
-  box.replaceChildren(...files.map((f) => {
-    const details = document.createElement('details');
-    details.open = openDiffs.has(f.path) ? openDiffs.get(f.path) : true;
-    details.addEventListener('toggle', () => openDiffs.set(f.path, details.open));
-    const summary = document.createElement('summary');
-    const status = document.createElement('span');
-    status.className = 'status ' + f.status;
-    status.textContent = f.status;
-    const undo = document.createElement('button');
-    undo.type = 'button';
-    undo.className = 'undo';
-    undo.textContent = 'Undo';
-    undo.title = 'Put this file back as it was before the change';
-    undo.disabled = chatBusy;
-    undo.addEventListener('click', (e) => { e.preventDefault(); undoFile(f); });
-    summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status, span('', 'spacer'), undo);
-    details.append(summary);
-    if (isPicture(f.path) && f.status !== 'deleted' && !f.hidden) {
-      const img = document.createElement('img');
-      img.className = 'thumb';
-      img.alt = `${f.path} as it is now`;
-      img.src = `/api/file?path=${encodeURIComponent(f.path)}`;
-      img.addEventListener('error', () => img.remove());
-      details.append(img);
-    }
-    if (f.hidden) {
+  box.replaceChildren(...files.map((f) => fileRow(f)));
+}
+
+// One changed file with its diff. `keep` names a commit already on GitHub: such
+// a file is shown closed, to read, with no Undo.
+function fileRow(f, keep = '') {
+  const details = document.createElement('details');
+  const key = keep ? `${keep}:${f.path}` : f.path;
+  details.open = openDiffs.has(key) ? openDiffs.get(key) : !keep;
+  details.addEventListener('toggle', () => openDiffs.set(key, details.open));
+  const summary = document.createElement('summary');
+  const status = document.createElement('span');
+  status.className = 'status ' + f.status;
+  status.textContent = f.status;
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.className = 'undo';
+  undo.textContent = 'Undo';
+  undo.title = 'Put this file back as it was before the change';
+  undo.disabled = chatBusy;
+  undo.addEventListener('click', (e) => { e.preventDefault(); undoFile(f); });
+  summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status, span('', 'spacer'), ...(keep ? [] : [undo]));
+  details.append(summary);
+  if (!keep && isPicture(f.path) && f.status !== 'deleted' && !f.hidden) {
+    const img = document.createElement('img');
+    img.className = 'thumb';
+    img.alt = `${f.path} as it is now`;
+    img.src = `/api/file?path=${encodeURIComponent(f.path)}`;
+    img.addEventListener('error', () => img.remove());
+    details.append(img);
+  }
+  if (f.hidden) {
+    const note = document.createElement('p');
+    note.className = 'diff-note';
+    note.textContent = f.hidden;
+    details.append(note);
+  }
+  if (f.diff) {
+    const pre = diffLines(f.diff);
+    if (pre.children.length) details.append(pre);
+    else if (!f.hidden) {
       const note = document.createElement('p');
       note.className = 'diff-note';
-      note.textContent = f.hidden;
-      details.append(note);
+      note.textContent = isPicture(f.path) ? (f.status === 'deleted' ? 'This picture is deleted.' : '') : 'Binary file, or nothing to show as text.';
+      if (note.textContent) details.append(note);
     }
-    if (f.diff) {
-      const pre = diffLines(f.diff);
-      if (pre.children.length) details.append(pre);
-      else if (!f.hidden) {
-        const note = document.createElement('p');
-        note.className = 'diff-note';
-        note.textContent = isPicture(f.path) ? (f.status === 'deleted' ? 'This picture is deleted.' : '') : 'Binary file, or nothing to show as text.';
-        if (note.textContent) details.append(note);
-      }
-    }
-    return details;
-  }));
+  }
+  return details;
 }
+
+// --- the two lists: this change, and what is waiting for a release ------------
+
+let changesTab = 'change';
+
+function showTab(which) {
+  changesTab = which;
+  $('tab-change').setAttribute('aria-selected', String(which === 'change'));
+  $('tab-release').setAttribute('aria-selected', String(which === 'release'));
+  $('changes').hidden = which !== 'change';
+  $('unreleased').hidden = which !== 'release';
+  if (which === 'release') loadUnreleased();
+}
+
+let unreleasedRun = 0;
+async function loadUnreleased() {
+  if (!state.site) return;
+  const run = ++unreleasedRun;
+  const box = $('unreleased');
+  if (!box.children.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Asking GitHub…'; box.replaceChildren(p); }
+  let data;
+  try { data = await api('GET', '/api/changes/unreleased'); }
+  catch (err) { data = { commits: [], failed: err.message }; }
+  if (run === unreleasedRun) renderUnreleased(data);
+}
+
+function renderUnreleased(data) {
+  const box = $('unreleased');
+  const note = (text, className = 'lead') => { const p = document.createElement('p'); p.className = className; p.textContent = text; return p; };
+  const out = [];
+  if (data.failed) return box.replaceChildren(note(`Could not work this out: ${data.failed}`, 'warning'));
+  if (data.problem) out.push(note(data.problem, 'warning'));
+  const branch = data.branch || 'main';
+  const n = data.commits.length + (data.more || 0);
+  if (data.empty) out.push(note('GitHub has nothing for this repo yet.', 'empty'));
+  else if (!n) out.push(note(data.since ? `Nothing is waiting. ${branch} on GitHub matches the last release, ${data.since}.` : `Nothing is on ${branch} yet.`, 'empty'));
+  else {
+    out.push(note(data.since
+      ? `Merged to ${branch} since the last release, ${data.since}. Publishing a release now would send ${n === 1 ? 'this' : `these ${n} changes`} to production.`
+      : `There is no release yet, so everything on ${branch} is waiting: ${n} commit${n === 1 ? '' : 's'}.`));
+  }
+  for (const c of data.commits) {
+    const h = document.createElement('p');
+    h.className = 'commit';
+    h.append(c.pr ? c.subject.replace(/\s*\(#\d+\)\s*$/, '') : c.subject); // the link beside it names the pull request
+    const small = document.createElement('small');
+    if (c.pr && state.site) small.append(link(`https://github.com/${state.site.key}/pull/${c.pr}`, `pull request ${c.pr}`));
+    else small.textContent = c.short;
+    h.append(small);
+    out.push(h, ...c.files.map((f) => fileRow(f, c.short)));
+    if (!c.files.length) out.push(note('No files changed.', 'diff-note'));
+  }
+  if (data.more) out.push(note(`And ${data.more} older commit${data.more === 1 ? '' : 's'}, not listed here.`));
+  box.replaceChildren(...out);
+}
+
+$('tab-change').addEventListener('click', () => showTab('change'));
+$('tab-release').addEventListener('click', () => showTab('release'));
 
 // The deployed site itself, not the address Roadie asks for its version.
 function deployedSite(h) {
@@ -1063,7 +1127,7 @@ function setState(next) {
   state = next;
   if (next.chat) syncChat(next.chat);
   render();
-  if ((next.site && next.site.key) !== siteBefore) { openDiffs.clear(); refreshChanges(0); loadChange(); }
+  if ((next.site && next.site.key) !== siteBefore) { openDiffs.clear(); $('unreleased').replaceChildren(); showTab('change'); refreshChanges(0); loadChange(); }
 }
 
 // --- events from the page -------------------------------------------------
@@ -1346,7 +1410,7 @@ async function working(text, fn) {
   renderChange();
   try { return await fn(); }
   catch (err) { showProblem(err.message); }
-  finally { changeWorking = null; renderChange(); refreshChanges(0); }
+  finally { changeWorking = null; renderChange(); refreshChanges(0); if (changesTab === 'release') loadUnreleased(); }
 }
 
 function showTests(result) {

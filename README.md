@@ -179,6 +179,19 @@ file back as it was before the change and leaves the rest alone. The edits it
 removes are kept in `git stash`, so they can be recovered. (In a repo with no
 commits yet there is no stash, and Undo says it will delete the file for good.)
 
+The pane has two tabs:
+
+- **This change** is the list above. It stays through the commit, the pull
+  request and the merge, until you finish the change.
+- **Waiting for release** lists what is merged to the main branch on GitHub
+  but not yet in a release, one heading per merged change with its files
+  under it. It is what publishing a release now would send to production,
+  which matters when you have merged more than one change since the last
+  release. It is to read only: there is no Undo, because these are already on
+  GitHub. Opening the tab asks GitHub for the newest main branch and the list
+  of releases; it sends nothing. "Production" here means the last release, not
+  what your server reports it is running.
+
 **All files**, at the top of this pane, lists every file in the site with its
 size, and pictures as thumbnails. Filter by name, **Show** a page in the
 preview, or **Delete** a file by hand.
