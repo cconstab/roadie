@@ -395,6 +395,10 @@ Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different p
 - **A picture I added does not show under Changed files**: the folder you chose
   is one the site's `.gitignore` leaves out. Roadie says so when that happens.
   Add it again to another folder.
+- **The AI says it made a change but nothing is different**: weaker models
+  sometimes report an edit they never made. Roadie adds a note to the chat when
+  a reply claims a change and no file was changed. Ask again, or choose a
+  stronger model in AI settings.
 - **The AI says it cannot see the picture**: the model has no vision. Choose
   another model with the AI button.
 - **A change is stuck**: **Abandon this change** is offered at every stage and
