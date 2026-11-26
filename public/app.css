@@ -137,7 +137,8 @@ pre.plan { margin: 0 0 .6rem; padding: .5rem .6rem; background: var(--code-bg); 
   flex-wrap: wrap;
 }
 /* The address box has a row of its own under the preview's buttons, like a browser's. */
-.path-form { flex: 1 1 100%; order: 10; display: flex; }
+.path-form { flex: 1 1 100%; order: 10; display: flex; gap: .4rem; }
+.path-form button { flex: none; }
 .path { font-family: ui-monospace, monospace; font-size: .85em; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .2rem .4rem; width: 100%; min-width: 0; }
 .path:disabled { opacity: .5; }
 .pill { padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: .85em; white-space: nowrap; }

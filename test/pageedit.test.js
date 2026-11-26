@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createApp } from '../src/app.js';
 import { createConfig } from '../src/config.js';
-import { applyTextEdit, cleanPick, editRequest, flexPattern, locateImage, pageFiles, pickContext, pickLabel, sitePages } from '../src/pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, flexPattern, locateImage, newPage, pageFileName, pageFiles, pickContext, pickLabel, sitePages } from '../src/pageedit.js';
 import { createPreviewProxy } from '../src/proxy.js';
 import { fakeGitOps, tmpDir, writeFiles } from './helpers.js';
 
@@ -243,4 +243,31 @@ test('the pages of a site are listed as preview addresses, home first', () => {
   // No home page: every page is still offered.
   assert.deepEqual(sitePages(['pages/a.html']).map((p) => p.path), ['/pages/a.html']);
   assert.deepEqual(sitePages([]), []);
+});
+
+test('a new page is a copy of an existing one, with its own title, and never replaces a file', (t) => {
+  const dir = tmpDir(t);
+  const home = '<!doctype html>\n<title>Bakery</title>\n<nav><a href="/">Home</a></nav>\n<h1 class="big">Bakery</h1>\n<h1>second</h1>\n';
+  writeFiles(dir, { 'public/index.html': home, 'public/about.html': '<title>About</title><h1>About</h1>', 'public/blog/index.html': '<title>Blog</title>', '.env': 'KEY=1' });
+  const files = ['public/index.html', 'public/about.html', 'public/blog/index.html'];
+
+  assert.equal(pageFileName('Our Story'), 'our-story.html');
+  assert.equal(pageFileName('Café & Bar.HTM'), 'cafe-bar.htm');
+  assert.throws(() => pageFileName(' !! '), /Give the page a name/);
+
+  const made = newPage({ dir, files, from: 'public/index.html', name: 'Our Story', title: 'Our <story> & more' });
+  assert.deepEqual(made, { file: 'public/our-story.html', path: '/our-story.html', from: 'public/index.html' });
+  const text = fs.readFileSync(path.join(dir, 'public/our-story.html'), 'utf8');
+  assert.match(text, /<title>Our &lt;story&gt; &amp; more<\/title>/);
+  assert.match(text, /<h1 class="big">Our &lt;story&gt; &amp; more<\/h1>\n<h1>second<\/h1>/, 'only the first heading changes');
+  assert.match(text, /<nav><a href="\/">Home<\/a><\/nav>/, 'the rest is the same');
+  assert.equal(fs.readFileSync(path.join(dir, 'public/index.html'), 'utf8'), home, 'the page copied is untouched');
+
+  // By address as well as by file; a page in a folder gets its copy in that folder.
+  assert.equal(newPage({ dir, files, from: '/blog/', name: 'first', title: '' }).file, 'public/blog/first.html');
+  assert.throws(() => newPage({ dir, files, from: 'public/index.html', name: 'about', title: 'x' }), /already exists/);
+  assert.throws(() => newPage({ dir, files, from: '.env', name: 'x', title: 'x' }), /Choose one of the site's pages/);
+  // A name cannot climb out of the folder: the dots and slashes are dropped.
+  assert.equal(newPage({ dir, files, from: 'public/index.html', name: '../../up', title: 'x' }).file, 'public/up.html');
+  assert.equal(fs.existsSync(path.join(dir, 'up.html')), false);
 });

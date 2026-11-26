@@ -7,6 +7,7 @@
 // handed to the AI as an exact instruction.
 import fs from 'node:fs';
 import { checkSitePath, isSecretPath } from './guards.js';
+import { addFile, cleanUploadPath } from './uploads.js';
 
 // Files whose text is page text, where a reworded sentence can be swapped in.
 const MARKUP = /\.(html?|xhtml|njk|nunjucks|ejs|hbs|handlebars|mustache|liquid|php|erb|twig|vue|svelte|astro)$/i;
@@ -171,6 +172,39 @@ export function sitePages(files) {
   const depth = (p) => p.path.split('/').length - (p.path.endsWith('/') ? 1 : 0);
   out.sort((a, b) => depth(a) - depth(b) || a.path.localeCompare(b.path));
   return out.filter((p, i) => out.findIndex((q) => q.path === p.path) === i).slice(0, 300);
+}
+
+// A file name for a page from the words the owner typed: "Our Story" is our-story.html.
+export function pageFileName(name) {
+  const typed = String(name || '').trim();
+  const ext = (typed.match(/\.html?$/i) || ['.html'])[0].toLowerCase();
+  const stem = typed.replace(/\.html?$/i, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  if (!stem) throw new Error('Give the page a name, such as "about".');
+  return stem + ext;
+}
+
+// Make a new page as a copy of an existing one, next to it, with its title and
+// main heading changed. Never replaces a file. Returns { file, path, from }.
+export function newPage({ dir, files, from, name, title }) {
+  const pages = sitePages(files);
+  const source = pages.find((p) => p.file === from) || pages.find((p) => p.path === from);
+  if (!source) throw new Error('Choose one of the site\'s pages to start from.');
+  const read = readText(dir, source.file);
+  if (!read) throw new Error(`${source.file} could not be read as text.`);
+  // Beside the page it copies, or beside the home page when that page is a folder's index.
+  const folder = source.file.includes('/') ? source.file.slice(0, source.file.lastIndexOf('/')) : '';
+  const rel = cleanUploadPath(folder, pageFileName(name));
+  let text = read.text;
+  const heading = String(title || '').trim().slice(0, 200);
+  if (heading) {
+    const safe = encode(heading);
+    text = text.replace(/(<title[^>]*>)[^<]*(<\/title>)/i, (_m, a, b) => a + safe + b)
+      .replace(/(<h1[^>]*>)[^<]*(<\/h1>)/i, (_m, a, b) => a + safe + b);
+  }
+  const added = addFile(dir, rel, Buffer.from(text, 'utf8'));
+  const made = sitePages([...files, added.path]).find((p) => p.file === added.path);
+  return { file: added.path, path: made ? made.path : '/' + added.path, from: source.file };
 }
 
 // Which file in the site is the picture at this address? Null unless exactly one fits.

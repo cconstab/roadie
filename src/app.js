@@ -10,7 +10,7 @@ import { detect } from './detect.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
-import { applyTextEdit, cleanPick, editRequest, locateImage, pickContext, pickLabel, sitePages } from './pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, locateImage, newPage, pickContext, pickLabel, sitePages } from './pageedit.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
@@ -297,10 +297,9 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       if (ready.busy) throw new Error('The AI is still working. Wait for it to finish, or press Stop.');
       // Remember the files as they are now, so this reply can be undone as a whole.
       beforeReply = null;
-      if (site && await gitops.hasCommits(site.dir).catch(() => false)) {
-        beforeReply = { dir: site.dir, tree: await gitops.treeId(site.dir).catch(() => null) };
-        if (!beforeReply.tree) beforeReply = null;
-      }
+      try {
+        if (site && await gitops.hasCommits(site.dir)) beforeReply = { dir: site.dir, tree: await gitops.treeId(site.dir) };
+      } catch { beforeReply = null; /* no snapshot: the reply cannot be undone as a whole, and the button stays off */ }
       const context = [
         undone ? 'The owner has undone the file changes from your last reply: the files are as they were before it. Read a file again before you rely on what you remember of it.' : '',
         pick ? pickContext(pick) : '',
@@ -353,6 +352,15 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     'GET /api/pages': async () => {
       if (!site) throw new Error('Open a site first.');
       return { pages: sitePages(await gitops.listFiles(site.dir)) };
+    },
+    // A new page, as a copy of an existing one. Written on this machine only.
+    'POST /api/pages/new': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before adding a page.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const made = newPage({ dir: site.dir, files: await gitops.listFiles(site.dir), from: String(body.from || ''), name: body.name, title: body.title });
+      flow.notify();
+      return made;
     },
     'GET /api/files/folders': async () => {
       if (!site) throw new Error('Open a site first.');
