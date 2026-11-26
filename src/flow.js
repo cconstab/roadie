@@ -10,6 +10,8 @@
 //   - Anything that looks like a secret stops the commit.
 //   - The default branch is never committed or pushed to (gitops refuses too),
 //     except the one first commit of a repo that is empty on GitHub.
+import fs from 'node:fs';
+import path from 'node:path';
 import { branchName, changeView, healthMatches, healthVersion, nextVersions, summarizeChecks, testsVerdict } from './change.js';
 import { WORKFLOW_FIX } from './gitops.js';
 import { createConfirmations, scanForSecrets } from './guards.js';
@@ -30,7 +32,7 @@ function secretsMessage(findings) {
 
 export function createFlow({
   gitops, config, getSite, runTests, emit = () => {}, draftPr, fetchImpl = fetch,
-  pollMs = 15_000, healthTimeoutMs = 30 * 60_000, now = () => Date.now(),
+  pollMs = 15_000, healthTimeoutMs = 30 * 60_000, checksGraceMs = 120_000, now = () => Date.now(),
 }) {
   const confirmations = createConfirmations({ now });
   let remote = {};       // what GitHub last said: { pr, checks, remoteEmpty, error }
@@ -100,7 +102,7 @@ export function createFlow({
         ...(remote.pr || {}),
         state: r.merge ? 'MERGED' : ((remote.pr && remote.pr.state) || 'OPEN'),
       } : null,
-      checks: remote.checks ? summarizeChecks(remote.checks) : (r && r.pr && !r.merge ? { state: 'unknown' } : null),
+      checks: remote.checks ? checkSummary(remote.checks) : (r && r.pr && !r.merge ? { state: 'unknown' } : null),
       settings: s.settings,
     };
   }
@@ -151,6 +153,19 @@ export function createFlow({
     finally { busy = null; notify(); }
   }
 
+  // Does this site have workflows on GitHub that will check a pull request?
+  function hasWorkflows(dir) {
+    try { return fs.readdirSync(path.join(dir, '.github', 'workflows')).some((f) => /\.ya?ml$/i.test(f)); } catch { return false; }
+  }
+  // The checks as they stand. Just after a push GitHub lists none for a few
+  // seconds; a site with workflows is given time before "none" is believed.
+  function checkSummary(list) {
+    const r = record();
+    const s = site();
+    const expectSoon = !!(r && r.pushedAt && now() - r.pushedAt < checksGraceMs && s && hasWorkflows(s.dir));
+    return summarizeChecks(list, { expectSoon });
+  }
+
   async function refreshRemote() {
     const s = site();
     const r = record();
@@ -175,7 +190,7 @@ export function createFlow({
       if (!getSite()) return stopPolling();
       await refreshRemote();
       const r = record();
-      const state = remote.checks ? summarizeChecks(remote.checks).state : 'unknown';
+      const state = remote.checks ? checkSummary(remote.checks).state : 'unknown';
       const awaitingCommit = !!(r && r.merge && !r.merge.sha);
       const awaitingChecks = !!(r && r.pr && !r.merge && (!remote.pr || remote.pr.state === 'OPEN') && (state === 'pending' || state === 'unknown'));
       if (!awaitingCommit && !awaitingChecks) {
@@ -384,7 +399,7 @@ export function createFlow({
       const pr = remote.pr;
       if (pr.state !== 'OPEN') throw fail(`Pull request #${pr.number} is ${pr.state.toLowerCase()}, so it cannot be merged.`);
       if (r.pushedTree !== f.treeId) throw fail('There are newer edits here that are not in the pull request. Update the PR first.');
-      const checks = summarizeChecks(remote.checks);
+      const checks = checkSummary(remote.checks);
       if (checks.state === 'pending') throw fail('The checks are still running. Wait for them to finish.');
       if (checks.state === 'fail') throw fail(`Checks are failing (${checks.failing.map((c) => c.name).join(', ')}), so Roadie will not merge.`);
       if (pr.mergeable === 'CONFLICTING') throw fail(`Pull request #${pr.number} conflicts with ${f.defaultBranch}.`);
@@ -501,7 +516,7 @@ export function createFlow({
             : await gitops.prCreate(s.key, { title, body, base: f.defaultBranch, head: r.branch });
         }
         const pushedTree = await gitops.treeId(s.dir);
-        save({ ...record(), pr, pushedTree, override: plan.override ? { tree: f.treeId, at: now() } : null });
+        save({ ...record(), pr, pushedTree, pushedAt: now(), override: plan.override ? { tree: f.treeId, at: now() } : null });
         remote.pr = null;
         remote.checks = null;
         await refreshRemote();
@@ -511,7 +526,7 @@ export function createFlow({
 
       if (action === 'merge') {
         // The checks may have changed while the confirmation was on screen.
-        const latest = summarizeChecks(await gitops.prChecks(s.key, plan.number));
+        const latest = checkSummary(await gitops.prChecks(s.key, plan.number));
         if (latest.state === 'pending') throw fail('Checks started running again, so Roadie did not merge. Wait for them to finish.');
         if (latest.state === 'fail') throw fail(`A check is now failing (${latest.failing.map((c) => c.name).join(', ')}), so Roadie did not merge.`);
         await gitops.prMerge(s.key, plan.number, { method: plan.method, sha: plan.sha, deleteBranch: true });

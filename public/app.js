@@ -1230,7 +1230,11 @@ function showPlan(prepared) {
   if (action === 'release') {
     const row = document.createElement('div');
     row.className = 'versions';
-    for (const [kind, tag] of [['patch', plan.versions.patch], ['minor', plan.versions.minor], ['major', plan.versions.major]]) {
+    // A first release has no earlier version to step up from: offer the two usual starting points.
+    const choices = plan.versions.latest
+      ? [['patch', plan.versions.patch], ['minor', plan.versions.minor], ['major', plan.versions.major]]
+      : [['still taking shape', plan.versions.minor], ['ready for the public', plan.versions.major]];
+    for (const [kind, tag] of choices) {
       const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'tag', value: tag, checked: tag === plan.tag });
       // A different version means different notes, so the step is prepared again.
       radio.addEventListener('change', () => prepareStep('release', { tag }));
