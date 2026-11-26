@@ -174,7 +174,11 @@ function render() {
       : 'The site is stopped. Choose Run to start it.';
     if (preview.state === 'failed') setLogOpen(true);
   }
-  $('preview-path').textContent = running ? framePath : '';
+  const address = $('preview-path');
+  address.disabled = !running;
+  // Leave the box alone while the owner is typing in it.
+  if (document.activeElement !== address) address.value = running ? framePath : '';
+  if (running && site && pagesFor !== site.dir) loadPages(site.dir);
   renderChatControls();
 }
 
@@ -627,6 +631,39 @@ $('chat-input').addEventListener('paste', (e) => {
   e.preventDefault();
   chooseFiles(files, { pasted: true });
 });
+
+// --- the address box above the preview ------------------------------------------
+
+let pagesFor = null; // the site whose pages are in the list
+
+async function loadPages(slug) {
+  pagesFor = slug;
+  try {
+    const { pages } = await api('GET', '/api/pages');
+    $('page-list').replaceChildren(...pages.map((p) => Object.assign(document.createElement('option'), { value: p.path, label: p.file })));
+  } catch { pagesFor = null; /* the box still takes a typed address */ }
+}
+
+// Show another page of the site in the preview. Edit on page stays as it is.
+function goToPage(typed) {
+  if (!frameUrl) return;
+  let path = String(typed || '').trim();
+  try { const u = new URL(path); path = u.pathname + u.search + u.hash; } catch { /* not a full address */ }
+  if (!path.startsWith('/')) path = '/' + path;
+  if (path.startsWith('//')) path = '/' + path.replace(/^\/+/, ''); // never another website
+  framePath = path;
+  pick = null;
+  renderPointing();
+  $('frame').src = frameUrl + path;
+}
+
+$('path-form').addEventListener('submit', (e) => { e.preventDefault(); goToPage($('preview-path').value); $('preview-path').blur(); });
+// Choosing from the list goes there at once, without Enter.
+$('preview-path').addEventListener('input', (e) => {
+  if (e.inputType === 'insertReplacementText' || e.inputType === undefined) goToPage(e.target.value);
+});
+$('preview-path').addEventListener('focus', (e) => { e.target.select(); if (pagesFor) loadPages(pagesFor); });
+$('preview-path').addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = framePath; e.target.blur(); } });
 
 // --- edit on page ---------------------------------------------------------------
 
