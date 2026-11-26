@@ -409,6 +409,18 @@ function detailOf(note, images) {
   return parts.length ? { detail: parts.join('\n') } : {};
 }
 
+// The gist of an earlier conversation, for an AI process that was not there.
+export function recallOf(items) {
+  const said = items.filter((i) => (i.role === 'user' || i.role === 'assistant') && i.text).slice(-12);
+  if (!said.length) return '';
+  const clip = (text) => (text.length > 600 ? text.slice(0, 600) + '…' : text);
+  return [
+    'You were restarted, so you have no memory of the conversation with the owner so far. In brief, the last of it went:',
+    ...said.map((i) => `${i.role === 'user' ? 'Owner' : 'You'}: ${clip(i.text.trim())}`),
+    'The files may have changed since then. Read a file again before you rely on what this says about it.',
+  ].join('\n');
+}
+
 // One conversation about one site. `emit` receives small updates for the interface:
 //   { op: 'add', item }  { op: 'append', id, text }  { op: 'update', id, patch }  { op: 'busy', busy }
 // Tools that change the site's files.
@@ -419,9 +431,12 @@ const changesFiles = (name) => CHANGING_TOOLS.has(Object.hasOwn(TOOL_ALIASES, na
 const CLAIMS_A_CHANGE = /\b(?:I(?: have|'ve|’ve)?(?: now| also| just| successfully)* (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewrote|rewritten|inserted|applied|implemented|made the change)|(?:has|have) been (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewritten|inserted|applied))\b/i;
 export const NO_CHANGE_NOTE = 'Roadie: the AI says it made a change, but it did not change any file in this reply. Nothing on the site is different. Ask it to make the change again, or try a stronger model in AI settings.';
 
-export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emit }) {
-  const items = [];
-  let nextId = 1;
+export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emit, history = [] }) {
+  // An earlier conversation, shown again after a restart. The AI process is new
+  // and remembers none of it, so it is told the gist with the first message.
+  const items = history.map((item) => ({ ...item, ...(item.status === 'running' ? { status: 'stopped' } : {}) }));
+  let nextId = items.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+  let recall = recallOf(items);
   let busy = false;
   let query = null;
   let closed = false;
@@ -567,6 +582,11 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emi
       if (busy) throw new Error('The AI is still working. Wait for it to finish, or choose Stop.');
       const status = aiStatus(ai);
       if (!status.ready) throw new Error(status.problem);
+      if (recall) {
+        add({ role: 'note', text: 'The AI has started afresh since the messages above (Roadie was restarted, or the AI settings changed). It has been told briefly what was said, but it does not remember the details.' });
+        context = [recall, context].filter(Boolean).join('\n\n');
+        recall = '';
+      }
       add({ role: 'user', text: trimmed, ...detailOf(note, images) });
       setBusy(true);
       if (!query) {

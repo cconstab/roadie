@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { z } from 'zod';
 import {
-  ALLOWED_TOOLS, NO_CHANGE_NOTE, STANDING_INSTRUCTIONS, TOOL_ALIASES, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, searchFiles,
+  ALLOWED_TOOLS, NO_CHANGE_NOTE, STANDING_INSTRUCTIONS, TOOL_ALIASES, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, recallOf, searchFiles,
 } from '../src/agent.js';
 import { cleanAi, createConfig } from '../src/config.js';
 import { isSecretPath } from '../src/guards.js';
@@ -322,6 +322,41 @@ test('a reply that claims a change without making one is flagged', async (t) => 
   assert.equal(await flagged('answered'), false, 'an answer that claims nothing is left alone');
   assert.equal(await flagged('claimed'), true, 'an earlier real edit does not excuse a later reply');
   assert.equal(chat.items.find((i) => i.role === 'tool' && i.text.startsWith('Write')).text, 'Write new.html', 'shown by its real name');
+});
+
+test('an earlier chat is shown again after a restart, and the new AI process is told the gist', async (t) => {
+  const s = site(t);
+  const turns = [];
+  const sdk = fakeSdk((content) => { turns.push(content); return [{ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'On it.' }] } }, { type: 'result', subtype: 'success' }]; });
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const history = [
+    { id: 4, role: 'user', text: 'Make the heading red' },
+    { id: 5, role: 'tool', text: 'Edit index.html', status: 'running' },
+    { id: 6, role: 'assistant', text: 'x'.repeat(700) },
+    { id: 7, role: 'note', text: 'Stopped.' },
+  ];
+  assert.equal(recallOf([]), '');
+  assert.equal(recallOf([{ role: 'tool', text: 'Read a' }]), '', 'nothing said, nothing to recall');
+
+  const chat = createChat({ sdk, z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), emit: () => {}, history });
+  t.after(() => chat.close());
+  assert.deepEqual(chat.items.map((i) => [i.id, i.role, i.status]), [[4, 'user', undefined], [5, 'tool', 'stopped'], [6, 'assistant', undefined], [7, 'note', undefined]], 'a tool that was cut off is not left spinning');
+  assert.equal(history[1].status, 'running', 'the saved list itself is not altered');
+
+  chat.send('Now make it blue');
+  await settle();
+  assert.deepEqual(chat.items.slice(4).map((i) => [i.id, i.role]), [[8, 'note'], [9, 'user'], [10, 'assistant']], 'ids carry on from the saved ones');
+  assert.match(chat.items[4].text, /started afresh/);
+  assert.match(turns[0], /^Now make it blue\n\n<background from="Roadie">\nYou were restarted/);
+  assert.match(turns[0], /Owner: Make the heading red\nYou: x{600}…\n/, 'long replies are cut short');
+  assert.doesNotMatch(turns[0], /Stopped\.|Edit index\.html/, 'only what was said');
+
+  // Told once: the second message carries no recap.
+  chat.send('And bigger');
+  await settle();
+  assert.equal(turns[1], 'And bigger');
+  assert.equal(chat.items.filter((i) => /started afresh/.test(i.text)).length, 1);
 });
 
 test('errors and Stop are reported plainly', async (t) => {
