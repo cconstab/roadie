@@ -204,3 +204,9 @@ Two faults found and fixed:
 **Verified in a real browser with the local model qwen3.5:9b:** the AI looked at the home page at phone width and described it correctly; a reply that edited one file and created another was undone exactly, leaving the owner's own new page and photo in place; a 1.8 MB, 4000-pixel photo went in at 437 KB and 2000 pixels, and unticked went in untouched; the new page appeared in the preview; the chat came back after a restart and the AI answered a question about the earlier conversation; the file browser listed no secrets and refused `.git` and `..`.
 
 **Not verified:** any of it with Claude itself (no API key here); `look_at_page` on Windows and Linux beyond the automated tests, which use whatever browser the CI machine has; Firefox and Safari for the new dialogs; a site whose deploy is live, so the Staging and Production steps have still only run against stand-ins.
+
+## Changed files after the first commit (branch `first-commit-files`, 2026-11-26)
+
+The owner expected the changed files to stay listed on the right once committed. Inside a change they already do (the list compares with where the branch left main). The one place the pane went blank was straight after a new repo's first commit, which goes to main with no change record. Now, when nothing is uncommitted, no change is open and the last commit is the repo's first, the pane lists that commit's files (`gitops.firstCommitFiles`, read with `git show`), closed by default and without Undo. Comparing with git's empty tree by its well-known id was tried first and failed: current git reports it as a bad object.
+
+Checked in a real browser against a one-commit repo: two files listed with the note, no Undo; after an edit the list went back to the one edited file with Undo. Not checked: the owner's exact case, which they have not yet described; after Finish the list is still empty by design.

@@ -365,3 +365,29 @@ test('the file browser lists the site\'s files with sizes, and never a secret or
   const listed = browseFiles(dir, ['index.html', 'images/logo.png', '.env', 'innocent.txt', 'gone.txt', 'docs', '../outside.txt']);
   assert.deepEqual(listed, [{ path: 'images/logo.png', size: 7, image: true }, { path: 'index.html', size: 11, image: false }]);
 });
+
+test("right after the first commit the pane lists that commit's files, to read and not to undo", async (t) => {
+  let uncommitted = [];
+  const firstFiles = [{ path: 'index.html', from: null, status: 'added', diff: '+<h1>hi</h1>' }];
+  const gitops = fakeGitOps({
+    clone: (slug, dir) => writeFiles(dir, { 'index.html': '<h1>hi</h1>' }),
+    changes: () => uncommitted,
+    firstCommitFiles: () => firstFiles,
+  });
+  const { call } = await openApp(t, gitops);
+  await call('POST', '/api/open', { repo: 'acme/site' });
+  await call('POST', '/api/preview/stop');
+
+  let data = (await call('GET', '/api/changes')).data;
+  assert.equal(data.committed, 'first');
+  assert.deepEqual(data.files.map((f) => f.path), ['index.html']);
+  const undo = await call('POST', '/api/changes/undo', { path: 'index.html' });
+  assert.equal(undo.status, 400);
+  assert.match(undo.data.error, /no changes to undo/);
+
+  // As soon as something is edited, the list is the edits again.
+  uncommitted = [{ path: 'about.html', from: null, status: 'added', diff: '+x' }];
+  data = (await call('GET', '/api/changes')).data;
+  assert.equal(data.committed, null);
+  assert.deepEqual(data.files.map((f) => f.path), ['about.html']);
+});

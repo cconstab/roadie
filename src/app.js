@@ -434,13 +434,21 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
     'GET /api/changes': async () => {
       if (!site) return { files: [] };
-      const files = (await gitops.changes(site.dir, flow.base())).map((f) => {
+      let found = await gitops.changes(site.dir, flow.base());
+      // Right after a repo's first commit there is nothing left to compare, so the
+      // pane would go blank. Show what that commit put on main instead, to read only.
+      let committed = null;
+      if (!found.length && flow.base() === 'HEAD') {
+        const first = await gitops.firstCommitFiles?.(site.dir);
+        if (first && first.length) { found = first; committed = 'first'; }
+      }
+      const files = found.map((f) => {
         if (isSecretPath(f.path)) return { ...f, diff: '', hidden: 'Not shown: this looks like a secrets file.' };
         if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
         return f;
       });
       // Undo keeps the edits in git stash, which a repo with no commits does not have.
-      return { files, undoKeeps: await gitops.hasCommits(site.dir) };
+      return { files, committed, undoKeeps: await gitops.hasCommits(site.dir) };
     },
 
     // Put one changed file back as it was. The edits go into git stash, so they can be recovered.

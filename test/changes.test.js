@@ -188,3 +188,19 @@ test('undoing a reply needs a commit to keep the edits against', async (t) => {
   await assert.rejects(gitops.restoreTree(dir, await gitops.treeId(dir)), /no commits yet/);
   assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), 'x\n');
 });
+
+test("after a repo's first commit, the files in it can be listed", async (t) => {
+  const { dir, git } = repo(t, { 'index.html': '<h1>hi</h1>\n', 'css/site.css': 'a { color: red }\n' });
+  const gitops = createGitOps();
+  const first = await gitops.firstCommitFiles(dir);
+  assert.deepEqual(first.map((c) => [c.path, c.status]), [['css/site.css', 'added'], ['index.html', 'added']]);
+  assert.match(first[1].diff.replace(/\r\n/g, '\n'), /\+<h1>hi<\/h1>/);
+
+  writeFiles(dir, { 'index.html': '<h1>two</h1>\n' });
+  git('commit', '-q', '-am', 'second');
+  assert.equal(await gitops.firstCommitFiles(dir), null);
+
+  const empty = tmpDir(t);
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: empty, stdio: 'pipe' });
+  assert.equal(await gitops.firstCommitFiles(empty), null, 'no commits is not a first commit');
+});

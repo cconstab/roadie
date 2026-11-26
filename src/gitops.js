@@ -203,6 +203,23 @@ export function createGitOps({ run = realRun } = {}) {
       return out.sort((a, b) => a.path.localeCompare(b.path));
     },
 
+    // What the repo's very first commit put in, in the shape changes() gives, or
+    // null when the last commit is not the first one. Read from the commit itself,
+    // so files edited since do not count.
+    async firstCommitFiles(dir) {
+      if (!(await this.hasCommits(dir))) return null;
+      const parent = await git(dir, ['rev-parse', '--verify', '--quiet', 'HEAD~1']);
+      if (parent.code === 0) return null;
+      const names = await git(dir, ['show', '--format=', '--name-only', '-z', 'HEAD', '--']);
+      if (names.code !== 0) throw new Error(`Reading the first commit failed: ${names.stderr.trim()}`);
+      const out = [];
+      for (const file of names.stdout.split('\0').filter(Boolean)) {
+        const d = await git(dir, ['show', '--format=', '--no-color', '--no-ext-diff', 'HEAD', '--', file]);
+        out.push({ path: file, from: null, status: 'added', diff: d.stdout });
+      }
+      return out.sort((x, y) => x.path.localeCompare(y.path));
+    },
+
     // --- facts the change bar needs -----------------------------------------
 
     async headSha(dir) {

@@ -178,6 +178,9 @@ the picture itself when the file is an image. **Undo** on a file puts that one
 file back as it was before the change and leaves the rest alone. The edits it
 removes are kept in `git stash`, so they can be recovered. (In a repo with no
 commits yet there is no stash, and Undo says it will delete the file for good.)
+The list stays while a change is open, after its commit too, until you finish
+the change. Right after a new site's first commit, which has no change around
+it, the pane lists the files in that commit to read, without Undo.
 
 **All files**, at the top of this pane, lists every file in the site with its
 size, and pictures as thumbnails. Filter by name, **Show** a page in the

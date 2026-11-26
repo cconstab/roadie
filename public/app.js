@@ -322,7 +322,7 @@ let undoKeeps = true; // does Undo keep the edits (git stash), or is the repo to
 function refreshChanges(delay = 250) {
   clearTimeout(changesTimer);
   changesTimer = setTimeout(async () => {
-    try { const data = await api('GET', '/api/changes'); undoKeeps = data.undoKeeps !== false; renderChanges(data.files); }
+    try { const data = await api('GET', '/api/changes'); undoKeeps = data.undoKeeps !== false; renderChanges(data.files, data.committed); }
     catch (err) { console.error('Could not load changes:', err); }
   }, delay);
 }
@@ -342,7 +342,7 @@ function diffLines(diff) {
   return pre;
 }
 
-function renderChanges(files) {
+function renderChanges(files, committed = null) {
   const box = $('changes');
   const count = $('changes-count');
   count.hidden = !files.length;
@@ -353,9 +353,17 @@ function renderChanges(files) {
     p.textContent = state.site ? 'No changes yet. The site matches its last commit.' : 'Open a site to see its changes.';
     return box.replaceChildren(p);
   }
-  box.replaceChildren(...files.map((f) => {
+  // After a repo's first commit the list shows what that commit holds: to read, not to undo.
+  const head = [];
+  if (committed) {
+    const p = document.createElement('p');
+    p.className = 'diff-note';
+    p.textContent = "These files are in the site's first commit. Nothing has changed since. Start a change to edit the site.";
+    head.push(p);
+  }
+  box.replaceChildren(...head, ...files.map((f) => {
     const details = document.createElement('details');
-    details.open = openDiffs.has(f.path) ? openDiffs.get(f.path) : true;
+    details.open = openDiffs.has(f.path) ? openDiffs.get(f.path) : !committed;
     details.addEventListener('toggle', () => openDiffs.set(f.path, details.open));
     const summary = document.createElement('summary');
     const status = document.createElement('span');
@@ -368,7 +376,7 @@ function renderChanges(files) {
     undo.title = 'Put this file back as it was before the change';
     undo.disabled = chatBusy;
     undo.addEventListener('click', (e) => { e.preventDefault(); undoFile(f); });
-    summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status, span('', 'spacer'), undo);
+    summary.append(f.from ? `${f.from} → ${f.path}` : f.path, status, span('', 'spacer'), ...(committed ? [] : [undo]));
     details.append(summary);
     if (isPicture(f.path) && f.status !== 'deleted' && !f.hidden) {
       const img = document.createElement('img');
