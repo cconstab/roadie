@@ -186,7 +186,7 @@ dialog h2 { font-size: 1rem; text-transform: none; letter-spacing: 0; color: var
 .msg.tool .detail { display: block; margin-top: .15rem; font-family: ui-monospace, monospace; font-size: .9em; }
 .msg.error { color: var(--bad); border-left: 3px solid var(--bad); padding-left: .5rem; }
 .msg.note { color: var(--muted); font-style: italic; }
-.composer { border-top: 1px solid var(--line); padding: .5rem .6rem; display: grid; gap: .4rem; }
+.composer { border-top: 1px solid var(--line); padding: .5rem .6rem; display: grid; gap: .4rem; grid-template-columns: minmax(0, 1fr); }
 .composer textarea { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .4rem .5rem; resize: vertical; width: 100%; min-height: 3.2rem; }
 .composer-actions { display: flex; align-items: center; gap: .4rem; }
 .composer-actions .muted { flex: 1; font-size: .9em; }
@@ -283,4 +283,6 @@ dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3r
 .edit-bar { margin: 0; padding: .3rem .6rem; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); font-size: .9em; }
 .pointing { display: flex; align-items: center; gap: .4rem; border: 1px solid var(--accent); border-radius: 6px; padding: .2rem .4rem; font-size: .9em; }
 .pointing span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pointing button { font-size: .9em; padding: 0 .4rem; }
+.pointing button { font-size: .9em; padding: 0 .4rem; flex: none; white-space: nowrap; }
+@keyframes nudge { from { box-shadow: 0 0 0 4px var(--accent); } to { box-shadow: 0 0 0 0 transparent; } }
+#chat-input.nudge { animation: nudge 1.2s ease-out; }
