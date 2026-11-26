@@ -10,7 +10,7 @@ import { detect } from './detect.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
-import { applyTextEdit, cleanPick, editRequest, locateImage, newPage, pickContext, pickLabel, sitePages } from './pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, linkRequest, locateImage, newPage, pickContext, pickLabel, sitePages } from './pageedit.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
@@ -361,6 +361,13 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     },
 
     // --- Edit on page: what the owner clicked or typed in the preview ---
+    // The words to send the AI for a link chosen from the page's toolbar.
+    'POST /api/edit/link': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      const where = cleanPick(body.where);
+      if (!where) throw new Error('Malformed request.');
+      return { text: linkRequest(where, body.to) };
+    },
     // Which file is the picture they clicked?
     'POST /api/edit/locate': async (body) => {
       if (!site) throw new Error('Open a site first.');

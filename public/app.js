@@ -804,7 +804,7 @@ $('preview-path').addEventListener('keydown', (e) => { if (e.key === 'Escape') {
 let editMode = false;
 let pick = null;           // what the owner is pointing at, sent with the next message
 let replaceTarget = null;  // { file, page } while a clicked picture is being replaced
-const EDIT_HINT = 'Click something on the page for its toolbar: replace a picture, change text, ask the AI, or delete. Double-click text to change it straight away. Links and buttons on the page do not work while this is on.';
+const EDIT_HINT = 'Click something on the page for its toolbar: replace a picture, change text, make a link, ask the AI, or delete. Double-click text to change it straight away. Links and buttons on the page do not work while this is on.';
 
 function tellFrame(message) {
   const frame = $('frame');
@@ -882,21 +882,56 @@ async function pageAction(action, next) {
     input.classList.add('nudge');
     return;
   }
+  if (action === 'link') {
+    const form = $('link-form');
+    form.reset();
+    $('link-error').hidden = true;
+    $('link-title').textContent = next.link ? 'Change this link' : 'Link to';
+    $('link-what').textContent = next.link ? `It goes to ${next.link} now.` : `${next.image ? 'This picture' : `“${(next.text || `<${next.tag}>`).slice(0, 60)}”`} will become a link.`;
+    if (pagesFor) loadPages(pagesFor);
+    linkFor = next;
+    $('link-dialog').showModal();
+    return;
+  }
   if (action !== 'delete') return;
-  const request = 'Remove this element from the page. Tidy up anything that is left empty or broken by taking it out.';
+  askAboutPick(next, 'Remove this element from the page. Tidy up anything that is left empty or broken by taking it out.',
+    'Asked the AI to remove it. Use Undo last reply if it takes out too much.', 'A request to remove it is in the message box: press Send when you are ready.');
+}
+
+// Send the AI a request about the element being pointed at, or, when the
+// message box is in use or the AI is busy, leave the request there to send later.
+async function askAboutPick(next, request, sentText, waitingText) {
+  const status = $('edit-status');
+  const input = $('chat-input');
   if (input.disabled || chatBusy || input.value.trim() || attachments.length) {
     input.value = (input.value.trim() ? input.value.trim() + '\n\n' : '') + request;
-    status.textContent = 'A request to remove it is in the message box: press Send when you are ready.';
+    status.textContent = waitingText;
     return;
   }
   try {
     await api('POST', '/api/chat/send', { text: request, images: [], page: framePath, pick: next });
-    status.textContent = 'Asked the AI to remove it. Use Undo in the changed files if it takes out too much.';
+    status.textContent = sentText;
     if (pick === next) clearPick();
   } catch (err) {
     showProblem(err.message);
   }
 }
+
+let linkFor = null; // the element the link dialog is about
+$('link-cancel').addEventListener('click', () => $('link-dialog').close());
+$('link-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const problem = $('link-error');
+  problem.hidden = true;
+  try {
+    const { text } = await api('POST', '/api/edit/link', { where: linkFor, to: $('link-form').elements.to.value });
+    $('link-dialog').close();
+    await askAboutPick(linkFor, text, 'Asked the AI to make the link. Use Undo last reply if it is not what you wanted.', 'A request to make the link is in the message box: press Send when you are ready.');
+  } catch (err) {
+    problem.textContent = err.message;
+    problem.hidden = false;
+  }
+});
 
 // Text was changed on the page: have Roadie write it to the site's file, or
 // put a request for the AI in the message box when it cannot tell where.
@@ -1546,7 +1581,7 @@ window.addEventListener('message', (e) => {
   if (!editMode) return;
   if (data.roadie === 'pick' && data.pick) setPick(data.pick);
   else if (data.roadie === 'unpick') { pick = null; renderPointing(); }
-  else if (data.roadie === 'action' && data.pick && ['replace', 'ask', 'delete'].includes(data.action)) pageAction(data.action, data.pick);
+  else if (data.roadie === 'action' && data.pick && ['replace', 'ask', 'delete', 'link'].includes(data.action)) pageAction(data.action, data.pick);
   else if (data.roadie === 'text' && data.where) applyPageText(data);
 });
 

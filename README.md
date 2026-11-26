@@ -211,6 +211,10 @@ site normally.
   under the message box says what you are pointing at. The toolbar offers:
   - **Replace image** (on a picture): choose another file to take its place.
   - **Edit text** (on words): the same as a double-click, below.
+  - **Link** (or **Change link** on something that already is one): pick one of
+    the site's pages from a list, or type a web or email address. Roadie asks
+    the AI to make the link, so it is written the way the rest of the site is.
+    For a link in the menu on every page, ask in the chat instead.
   - **Ask AI**: type what should happen to it, for example "make this bigger" or
     "move this under the photo". Your next message is about that element.
   - **Delete**: asks the AI to take it off the page. If you have a message half

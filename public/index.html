@@ -41,7 +41,7 @@
         <h2 id="chat-h">Chat</h2>
         <button type="button" id="ai-btn" class="pill-button" title="AI settings"><span id="ai-label" class="pill"></span></button>
         <span class="spacer"></span>
-        <button type="button" id="undo-reply-btn" title="Put every file back as it was before the AI's last reply" disabled>Undo last reply</button>
+        <button type="button" id="undo-reply-btn" title="Put every file back as it was before the AI's last reply" disabled>Undo reply</button>
         <button type="button" id="new-chat-btn" disabled>New chat</button>
       </div>
       <div id="messages" class="messages" aria-live="polite"></div>
@@ -146,6 +146,24 @@
     <div class="actions">
       <button type="button" id="browse-close">Close</button>
     </div>
+  </dialog>
+
+  <dialog id="link-dialog">
+    <form id="link-form" method="dialog">
+      <h2 id="link-title">Link to</h2>
+      <p class="muted" id="link-what"></p>
+      <div class="fields">
+        <label>Where should it go? <input name="to" list="page-list" required spellcheck="false" autocomplete="off" placeholder="/about.html">
+          <small>Pick one of the site's pages, or type an address: another website (https://…) or an email address.</small>
+        </label>
+      </div>
+      <p class="muted">Roadie asks the AI to make the link, so it is written the way the rest of your site is.</p>
+      <p id="link-error" class="warning" hidden></p>
+      <div class="actions">
+        <button type="button" id="link-cancel">Cancel</button>
+        <button type="submit" class="primary">Ask the AI to link it</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="page-dialog">

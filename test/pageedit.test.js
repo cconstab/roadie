@@ -4,7 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { createApp } from '../src/app.js';
 import { createConfig } from '../src/config.js';
-import { applyTextEdit, cleanPick, editRequest, flexPattern, locateImage, newPage, pageFileName, pageFiles, pickContext, pickLabel, sitePages } from '../src/pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, flexPattern, linkRequest, linkTarget, locateImage, newPage, pageFileName, pageFiles, pickContext, pickLabel, sitePages } from '../src/pageedit.js';
 import { createPreviewProxy } from '../src/proxy.js';
 import { fakeGitOps, tmpDir, writeFiles } from './helpers.js';
 
@@ -270,4 +270,25 @@ test('a new page is a copy of an existing one, with its own title, and never rep
   // A name cannot climb out of the folder: the dots and slashes are dropped.
   assert.equal(newPage({ dir, files, from: 'public/index.html', name: '../../up', title: 'x' }).file, 'public/up.html');
   assert.equal(fs.existsSync(path.join(dir, 'up.html')), false);
+});
+
+test('a link chosen on the page becomes an exact request for the AI, to a sane address only', () => {
+  assert.equal(linkTarget('/about.html'), '/about.html');
+  assert.equal(linkTarget(' about.html '), '/about.html');
+  assert.equal(linkTarget('#contact'), '#contact');
+  assert.equal(linkTarget('https://example.com/a?b=1'), 'https://example.com/a?b=1');
+  assert.equal(linkTarget('www.example.com'), 'https://www.example.com');
+  assert.equal(linkTarget('hello@example.com'), 'mailto:hello@example.com');
+  assert.equal(linkTarget('tel:+15551234'), 'tel:+15551234');
+  assert.equal(linkTarget('//evil.example/x'), '/evil.example/x', 'never another website by accident');
+  for (const bad of ['', '   ', 'javascript:alert(1)', 'data:text/html,x', 'file:///etc/passwd', '/a b', '/a"onclick="x', '/<script>']) {
+    assert.throws(() => linkTarget(bad), /Choose a page|cannot be in a link|A link can go to/, bad);
+  }
+  const plain = cleanPick({ tag: 'p', page: '/', selector: 'main > p', text: 'Read our story' });
+  assert.match(linkRequest(plain, 'our-story.html'), /^Make this a link to "\/our-story\.html"\. .*change nothing else\.$/);
+  const linked = cleanPick({ tag: 'a', page: '/', selector: 'nav > a', text: 'Home', link: '/old.html' });
+  assert.equal(linked.link, '/old.html');
+  assert.match(linkRequest(linked, '/new.html'), /^Change where this link goes: from "\/old\.html" to "\/new\.html"\. Change only this link/);
+  assert.match(pickContext(linked), /It is, or is inside, a link to: "\/old\.html"/);
+  assert.throws(() => linkRequest(plain, 'javascript:x'), /A link can go to/);
 });
