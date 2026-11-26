@@ -1,6 +1,6 @@
 {
   "name": "roadie",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "private": true,
   "description": "Edit a hand-coded website by chatting with an AI, preview it live, and walk the change through GitHub to staging and production.",
   "type": "module",
