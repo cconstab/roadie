@@ -215,9 +215,92 @@ test('chat and changed files work through the API, with secrets kept out of view
   assert.match(files[1].hidden, /secrets file/);
   assert.ok(!JSON.stringify(files).includes('hunter2'));
 
-  // Changing the AI starts a fresh conversation; no key is ever written to disk.
+  // Changing the AI keeps what was said on screen (the new AI is told the gist with
+  // the next message); no key is ever written to disk.
   const switched = await call('POST', '/api/ai', { ai: { provider: 'ollama', ollamaModel: 'local-model' } });
   assert.equal(switched.data.ai.status.ready, true);
-  assert.deepEqual(switched.data.chat.items, []);
+  assert.deepEqual(switched.data.chat.items.map((i) => i.text), ['make it pop', 'You said: make it pop']);
+  assert.equal(switched.data.chat.busy, false);
   assert.ok(!fs.readFileSync(path.join(home, 'config.json'), 'utf8').includes('sk-test'));
+});
+
+test('a reply can be undone as a whole, and the chat is kept across a restart', async (t) => {
+  const { z } = await import('zod');
+  const home = tmpDir(t);
+  const trees = ['a'.repeat(40), 'b'.repeat(40)]; // before the reply, and at the time of the undo
+  const restored = [];
+  const gitops = fakeGitOps({
+    clone: (slug, dir) => writeFiles(dir, { 'index.html': '<h1>hi</h1>' }),
+    treeId: () => trees.shift() || 'c'.repeat(40),
+    restoreTree: (dir, tree) => { restored.push(tree); return { stashed: true }; },
+  });
+  const turns = [];
+  const sdk = {
+    tool: (name, d, s, handler) => ({ name, handler }),
+    createSdkMcpServer: (o) => o,
+    query({ prompt }) {
+      const it = (async function* () {
+        for await (const turn of prompt) {
+          turns.push(turn.message.content);
+          yield { type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'Changed it.' }] } };
+          yield { type: 'result', subtype: 'success' };
+        }
+      })();
+      it.interrupt = async () => {};
+      it.close = () => {};
+      return it;
+    },
+  };
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const start = async () => {
+    const app = await createApp({ home, gitops, config: createConfig(home), agentSdk: async () => ({ sdk, z }) });
+    const port = await app.listen(0);
+    const call = async (method, p, body) => {
+      const res = await fetch(`http://127.0.0.1:${port}${p}`, { method, headers: { 'X-Roadie-Token': app.token, Cookie: app.cookie, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      return { status: res.status, data: await res.json() };
+    };
+    return { app, call };
+  };
+  const wait = () => new Promise((r) => setTimeout(r, 60));
+
+  const first = await start();
+  await first.call('POST', '/api/open', { repo: 'acme/site' });
+  assert.equal((await first.call('GET', '/api/state')).data.chat.canUndo, false);
+  assert.equal((await first.call('POST', '/api/chat/undo')).status, 400, 'nothing to undo yet');
+  assert.equal((await first.call('POST', '/api/chat/send', { text: 'Make it red', page: '/about.html' })).status, 200);
+  await wait();
+  assert.equal((await first.call('GET', '/api/state')).data.chat.canUndo, true);
+
+  // Undo: the files go back to the snapshot taken before the message was sent.
+  assert.deepEqual((await first.call('POST', '/api/chat/undo')).data, { stashed: true });
+  assert.deepEqual(restored, ['a'.repeat(40)]);
+  const after = (await first.call('GET', '/api/state')).data.chat;
+  assert.equal(after.canUndo, false, 'only once');
+  assert.match(after.items.at(-1).text, /You undid the changes from the last reply/);
+  // The AI is told, with the next message, that its edits are gone.
+  await first.call('POST', '/api/chat/send', { text: 'Try green' });
+  await wait();
+  assert.match(turns[1], /The owner has undone the file changes from your last reply/);
+
+  // The chat is in Roadie's own folder, not in the site.
+  const file = path.join(home, 'chats', 'acme__site.json');
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).items.map((i) => i.role), ['user', 'assistant', 'note', 'user', 'assistant']);
+  await first.app.close();
+
+  // Roadie starts again: the chat is back, and the new AI process is told the gist.
+  const second = await start();
+  t.after(() => second.app.close());
+  await second.call('POST', '/api/open', { repo: 'acme/site' });
+  const back = (await second.call('GET', '/api/state')).data.chat;
+  assert.deepEqual(back.items.map((i) => i.text).slice(0, 2), ['Make it red', 'Changed it.']);
+  assert.equal(back.canUndo, false, 'a snapshot does not outlive the run that took it');
+  await second.call('POST', '/api/chat/send', { text: 'And bigger' });
+  await wait();
+  assert.match(turns[2], /^And bigger\n\n<background from="Roadie">\nYou were restarted[\s\S]*Owner: Try green/);
+
+  // New chat forgets it for good.
+  await second.call('POST', '/api/chat/new');
+  assert.equal(fs.existsSync(file), false);
+  assert.deepEqual((await second.call('GET', '/api/state')).data.chat.items, []);
 });

@@ -128,6 +128,20 @@ function pruneEmptyFolders(root, start) {
   }
 }
 
+// The site's files for the owner to browse: [{ path, size, image }]. Secrets
+// and anything outside the site are left out, as they are for the AI.
+export function browseFiles(siteDir, files) {
+  const out = [];
+  for (const file of files) {
+    const checked = checkSitePath(siteDir, file);
+    if (!checked.ok) continue;
+    let size = 0;
+    try { const stat = fs.statSync(checked.abs); if (!stat.isFile()) continue; size = stat.size; } catch { continue; }
+    out.push({ path: checked.rel, size, image: !!imageType(checked.rel) });
+  }
+  return out.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 // Where images go in this site: the folders that already hold some, most used
 // first, and the one to offer by default.
 export function uploadFolders(files) {

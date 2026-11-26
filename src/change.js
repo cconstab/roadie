@@ -72,9 +72,12 @@ export function healthVersion(body) {
   } catch { return null; }
 }
 
-// One verdict for a pull request's checks.
-export function summarizeChecks(checks) {
+// One verdict for a pull request's checks. GitHub takes a few seconds to list
+// the checks after a push: with `expectSoon`, an empty list means "not started
+// yet", not "this repo has none".
+export function summarizeChecks(checks, { expectSoon = false } = {}) {
   const list = Array.isArray(checks) ? checks : [];
+  if (!list.length && expectSoon) return { state: 'pending', starting: true, total: 0, passing: 0, pending: 0, failing: [] };
   const failing = list.filter((c) => c.bucket === 'fail' || c.bucket === 'cancel');
   const pending = list.filter((c) => c.bucket === 'pending');
   const passing = list.filter((c) => c.bucket === 'pass' || c.bucket === 'skipping');
@@ -225,7 +228,7 @@ export function changeView(f) {
       return finish();
     }
     if (checks.state === 'pending' || checks.state === 'unknown') {
-      set('ci', 'current', checks.state === 'pending' ? `${checks.passing} of ${checks.total} checks done.` : 'Asking GitHub…');
+      set('ci', 'current', checks.starting ? 'Waiting for GitHub to start the checks.' : checks.state === 'pending' ? `${checks.passing} of ${checks.total} checks done.` : 'Asking GitHub…');
       next = { id: 'merge', label: 'Merge', enabled: false, why: 'Waiting for the checks to finish.' };
     } else if (checks.state === 'fail') {
       set('ci', 'failed', `${checks.failing.length} failing: ${checks.failing.map((c) => c.name).join(', ')}`);

@@ -32,6 +32,7 @@ How you work here:
 - The owner adds images and other files with Roadie's "Add files" button and tells you where they went. Look at an image with Read before you use it, link to it the way the site already links to its images, and give it alt text that says what it shows. You cannot make or change pictures yourself, except SVG, which is text.
 - The owner may also attach a screenshot or a design to a message for you to work from. That picture is not a file in the site.
 - The owner can click an element in the preview to point at it. Roadie then tells you the page, the element and its text as background. Find that element in the site's files and change that one, not others that look like it.
+- You cannot see the page unless you look: use look_at_page to take a picture of it when the request is about how something looks, and again after a change to layout or style to check your work. Do not claim something looks right without looking.
 - You have no shell, no git and no network. Roadie's owner handles branches, commits, pull requests and releases with buttons in the interface. Do not ask them to run git commands for you.
 - Files that hold secrets (such as .env) are off limits.
 - When you finish, say briefly what you changed and whether the tests pass.
@@ -44,7 +45,7 @@ Helping with hosting:
 
 const FILE_TOOLS = { Read: 'file_path', Edit: 'file_path', Write: 'file_path' };
 const SERVER = 'roadie';
-const ROADIE_NAMES = ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests'];
+const ROADIE_NAMES = ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests', 'look_at_page'];
 const ROADIE_TOOLS = ROADIE_NAMES.map((t) => `mcp__${SERVER}__${t}`);
 export const ALLOWED_TOOLS = [...Object.keys(FILE_TOOLS), ...ROADIE_TOOLS];
 // Roadie tools that name files: which inputs hold the paths.
@@ -76,7 +77,7 @@ export function checkToolUse(siteDir, toolName, input) {
     }
     return null;
   }
-  return `${toolName} is not available here. Use Read, Edit, Write, list_files, search_files, delete_file, move_file or run_tests.`;
+  return `${toolName} is not available here. Use Read, Edit, Write, list_files, search_files, delete_file, move_file, run_tests or look_at_page.`;
 }
 
 // Is a way to reach the chosen AI in place?
@@ -171,7 +172,7 @@ export async function searchFiles({ gitops, dir, query, glob, limit = 200 }) {
 
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 
-function roadieTools({ sdk, z, gitops, site, runTests }) {
+function roadieTools({ sdk, z, gitops, site, runTests, lookAtPage }) {
   const { dir } = site;
   return sdk.createSdkMcpServer({
     name: SERVER,
@@ -213,12 +214,27 @@ function roadieTools({ sdk, z, gitops, site, runTests }) {
           const verdict = result.passed ? 'PASSED' : result.code === null ? 'NOT RUN' : `FAILED (exit ${result.code})`;
           return { ...text(`Tests ${verdict}\n\n${result.output}`), isError: !result.passed };
         }, { alwaysLoad: true }),
+      sdk.tool('look_at_page', 'Take a picture of a page of the running site and look at it. Use it to check how a change looks, or to see what the owner is describing. Shows the top of the page at the chosen width.',
+        {
+          page: z.string().optional().describe('Path of the page, such as "/" or "/about.html". Defaults to the page the owner has in the preview.'),
+          size: z.string().optional().describe('"desktop" (the default), "tablet" or "phone"'),
+        },
+        async ({ page, size }) => {
+          if (!lookAtPage) return { ...text('Looking at pages is not available here.'), isError: true };
+          try {
+            const shot = await lookAtPage({ page, size });
+            return { content: [
+              { type: 'text', text: `This is ${shot.page} at ${shot.width} pixels wide, as the site serves it now. Only the top ${shot.height} pixels are shown. Files from other websites (fonts, embeds) are not loaded in this picture.` },
+              { type: 'image', data: shot.png.toString('base64'), mimeType: 'image/png' },
+            ] };
+          } catch (err) { return { ...text(err.message), isError: true }; }
+        }, { alwaysLoad: true }),
     ],
   });
 }
 
 // The options Roadie hands to the SDK's query(). Kept separate so tests can inspect them.
-export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
+export function agentOptions({ sdk, z, gitops, site, ai, runTests, lookAtPage, onStderr }) {
   const deny = (hookEventName, reason) => ({
     hookSpecificOutput: { hookEventName, permissionDecision: 'deny', permissionDecisionReason: reason },
   });
@@ -237,7 +253,7 @@ export function agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr }) {
         }],
       }],
     },
-    mcpServers: { [SERVER]: roadieTools({ sdk, z, gitops, site, runTests }) },
+    mcpServers: { [SERVER]: roadieTools({ sdk, z, gitops, site, runTests, lookAtPage }) },
     // Some models get a tool's name slightly wrong; send those calls to the real tool.
     toolAliases: TOOL_ALIASES,
     strictMcpConfig: true,                   // no MCP servers from this machine's config
@@ -375,6 +391,7 @@ function toolLabel(siteDir, name, input = {}) {
     case `mcp__${SERVER}__list_files`: return input.glob ? `List files matching ${input.glob}` : 'List files';
     case `mcp__${SERVER}__search_files`: return `Search for "${input.query ?? ''}"`;
     case `mcp__${SERVER}__run_tests`: return 'Run tests';
+    case `mcp__${SERVER}__look_at_page`: return `Look at ${input.page || 'the page'}${input.size && input.size !== 'desktop' ? ` (${input.size})` : ''}`;
     case `mcp__${SERVER}__delete_file`: return `Delete ${rel(input.path)}`;
     case `mcp__${SERVER}__move_file`: return `Move ${rel(input.from)} to ${rel(input.to)}`;
     default: return name;
@@ -392,6 +409,18 @@ function detailOf(note, images) {
   return parts.length ? { detail: parts.join('\n') } : {};
 }
 
+// The gist of an earlier conversation, for an AI process that was not there.
+export function recallOf(items) {
+  const said = items.filter((i) => (i.role === 'user' || i.role === 'assistant') && i.text).slice(-12);
+  if (!said.length) return '';
+  const clip = (text) => (text.length > 600 ? text.slice(0, 600) + '…' : text);
+  return [
+    'You were restarted, so you have no memory of the conversation with the owner so far. In brief, the last of it went:',
+    ...said.map((i) => `${i.role === 'user' ? 'Owner' : 'You'}: ${clip(i.text.trim())}`),
+    'The files may have changed since then. Read a file again before you rely on what this says about it.',
+  ].join('\n');
+}
+
 // One conversation about one site. `emit` receives small updates for the interface:
 //   { op: 'add', item }  { op: 'append', id, text }  { op: 'update', id, patch }  { op: 'busy', busy }
 // Tools that change the site's files.
@@ -402,9 +431,12 @@ const changesFiles = (name) => CHANGING_TOOLS.has(Object.hasOwn(TOOL_ALIASES, na
 const CLAIMS_A_CHANGE = /\b(?:I(?: have|'ve|’ve)?(?: now| also| just| successfully)* (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewrote|rewritten|inserted|applied|implemented|made the change)|(?:has|have) been (?:updated|changed|added|removed|deleted|edited|modified|replaced|fixed|created|appended|renamed|moved|rewritten|inserted|applied))\b/i;
 export const NO_CHANGE_NOTE = 'Roadie: the AI says it made a change, but it did not change any file in this reply. Nothing on the site is different. Ask it to make the change again, or try a stronger model in AI settings.';
 
-export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
-  const items = [];
-  let nextId = 1;
+export function createChat({ sdk, z, gitops, site, ai, runTests, lookAtPage, emit, history = [] }) {
+  // An earlier conversation, shown again after a restart. The AI process is new
+  // and remembers none of it, so it is told the gist with the first message.
+  const items = history.map((item) => ({ ...item, ...(item.status === 'running' ? { status: 'stopped' } : {}) }));
+  let nextId = items.reduce((max, item) => Math.max(max, Number(item.id) || 0), 0) + 1;
+  let recall = recallOf(items);
   let busy = false;
   let query = null;
   let closed = false;
@@ -416,6 +448,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
   const changing = new Set(); // ids of running tool calls that would change a file
   let turnFrom = 0;           // where this reply's items start
   let turnChanged = false;    // did a file-changing tool succeed in this reply?
+  let turnTools = 0;          // how many tools this reply called
   let stderrTail = '';
   let info = null;          // what the SDK says it started with: { model, tools }
   // Tokens and estimated cost for this chat. Each result from the SDK carries
@@ -469,6 +502,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
         if (block.type === 'text' && block.text && !streamedText && !m.error) add({ role: 'assistant', text: block.text });
         if (block.type === 'tool_use') {
           toolItems.set(block.id, add({ role: 'tool', text: toolLabel(site.dir, block.name, block.input), status: 'running' }));
+          turnTools++;
           if (changesFiles(block.name)) changing.add(block.id);
         }
       }
@@ -498,9 +532,11 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       if (interrupted) add({ role: 'note', text: 'Stopped.' });
       // The AI's own account is not proof: say so when it reports a change it never made.
       const said = items.slice(turnFrom).filter((i) => i.role === 'assistant').map((i) => i.text).join('\n');
-      if (m.subtype === 'success' && !interrupted && !turnChanged && CLAIMS_A_CHANGE.test(said)) add({ role: 'note', text: NO_CHANGE_NOTE });
+      // A reply that used no tool at all is talk ("last time I changed…"), not a claim about this turn.
+      if (m.subtype === 'success' && !interrupted && turnTools > 0 && !turnChanged && CLAIMS_A_CHANGE.test(said)) add({ role: 'note', text: NO_CHANGE_NOTE });
       changing.clear();
       turnChanged = false;
+      turnTools = 0;
       turnFrom = items.length;
       interrupted = false;
       setBusy(false);
@@ -529,7 +565,7 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     feed = newFeed();
     query = sdk.query({
       prompt: feed.messages,
-      options: agentOptions({ sdk, z, gitops, site, ai, runTests, onStderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); } }),
+      options: agentOptions({ sdk, z, gitops, site, ai, runTests, lookAtPage, onStderr: (d) => { stderrTail = (stderrTail + d).slice(-2000); } }),
     });
     pump(query);
   }
@@ -539,6 +575,8 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
     get busy() { return busy; },
     get info() { return info; },
     get usage() { return usage(); },
+    // A line from Roadie itself in the chat list.
+    note(text) { add({ role: 'note', text: String(text) }); },
     // `context` is background for the AI that is not shown in the chat.
     // `images` are pictures for it to look at: [{ name, mediaType, data }], data in base64.
     // `note` is a line shown under the message in the chat list.
@@ -548,6 +586,11 @@ export function createChat({ sdk, z, gitops, site, ai, runTests, emit }) {
       if (busy) throw new Error('The AI is still working. Wait for it to finish, or choose Stop.');
       const status = aiStatus(ai);
       if (!status.ready) throw new Error(status.problem);
+      if (recall) {
+        add({ role: 'note', text: 'The AI has started afresh since the messages above (Roadie was restarted, or the AI settings changed). It has been told briefly what was said, but it does not remember the details.' });
+        context = [recall, context].filter(Boolean).join('\n\n');
+        recall = '';
+      }
       add({ role: 'user', text: trimmed, ...detailOf(note, images) });
       setBusy(true);
       if (!query) {

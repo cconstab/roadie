@@ -153,6 +153,19 @@ turn the starter into your site.
 works: files it reads and edits, test runs. **Stop** interrupts it. **New chat**
 starts a fresh conversation.
 
+- **The AI can look at the page.** When a request is about how something looks,
+  it takes a picture of the page (shown in the chat as "Look at /") and checks
+  its work the same way. This uses Chrome, Edge, Chromium or Brave if one is
+  installed, run out of sight and allowed to reach this machine only. It needs
+  a model that can see images. Set `ROADIE_BROWSER` to the browser's program to
+  choose one yourself.
+- **Undo last reply** puts every file back as it was before the AI's last reply,
+  in one go. What it undoes is kept in `git stash`. It needs the repo to have
+  at least one commit.
+- **The chat is kept.** Close Roadie and open the site again and the chat is
+  still there. The AI itself starts afresh each time, so Roadie tells it briefly
+  what was said. **New chat** forgets it for good.
+
 **Preview (middle).** Roadie runs the site's start command on a free port (passed
 as `PORT`, with `HOST=127.0.0.1`) and shows it here. A site with no start command
 is served as static files. The preview reloads when a file changes, and the site
@@ -165,6 +178,18 @@ the picture itself when the file is an image. **Undo** on a file puts that one
 file back as it was before the change and leaves the rest alone. The edits it
 removes are kept in `git stash`, so they can be recovered. (In a repo with no
 commits yet there is no stash, and Undo says it will delete the file for good.)
+
+**All files**, at the top of this pane, lists every file in the site with its
+size, and pictures as thumbnails. Filter by name, **Show** a page in the
+preview, or **Delete** a file by hand.
+
+### Adding a page
+
+**New page**, beside the address box, makes a page as a copy of one you already
+have, so it has the same look, menu and footer. Give it a title; Roadie names
+the file from it (`our-story.html`), sets the title and main heading, and shows
+the new page. The message box is then filled in ready for you to tell the AI
+what goes on it and to link it from the menu.
 
 ### Going to another page
 
@@ -186,6 +211,10 @@ site normally.
   under the message box says what you are pointing at. The toolbar offers:
   - **Replace image** (on a picture): choose another file to take its place.
   - **Edit text** (on words): the same as a double-click, below.
+  - **Link** (or **Change link** on something that already is one): pick one of
+    the site's pages from a list, or type a web or email address. Roadie asks
+    the AI to make the link, so it is written the way the rest of the site is.
+    For a link in the menu on every page, ask in the chat instead.
   - **Ask AI**: type what should happen to it, for example "make this bigger" or
     "move this under the photo". Your next message is about that element.
   - **Delete**: asks the AI to take it off the page. If you have a message half
@@ -223,8 +252,10 @@ the folder the site already keeps its images in. Then choose one of two things:
   can, and some local models can.
 
 The limits: 25 MB for a file added to the site, and five pictures of up to 5 MB
-each with one message. Roadie warns when an image is over 500 KB, which is large
-for a web page; it does not resize what you add to the site. A file is never
+each with one message. A picture over 500 KB is large for a web page, so Roadie
+makes it smaller as it goes in: at most 2000 pixels on the longer side, saved
+again as the same kind of file (JPEG, PNG or WebP). Untick **Make large
+pictures smaller** to add a file exactly as it is. A file is never
 replaced without asking, and the rules below apply to files you add as much as
 to the AI's edits: nothing goes into `.git`, outside the site's folder, or into
 a file that looks like it holds secrets.
@@ -288,8 +319,10 @@ the AI.
   once, and is refused if any file changed after you saw it.
 - **The AI can never push, merge or release.** It has no shell, no git, no `gh`
   and no network. It can read and edit files in the open site's folder, list,
-  search, rename, move and delete them, and run the site's test command.
-  Nothing else. It cannot touch
+  search, rename, move and delete them, run the site's test command, and take
+  a picture of a page of the running site. Nothing else. The browser that takes
+  the picture is told to reach this machine only, so it is not a way onto the
+  internet. It cannot touch
   `.git` however the name is spelled, and links in the repo that lead outside
   the site are not followed.
 - **Never commit or push to `main` directly.** The one exception is the first
@@ -381,6 +414,7 @@ passwords or tokens into the chat.
 |---|---|
 | `~/roadie/sites/<owner>/<repo>` | the clones |
 | `~/roadie/config.json` | site settings, the AI choice, the change in progress, guide ticks |
+| `~/roadie/chats/` | each site's chat, so it is still there next time |
 
 Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different port.
 

@@ -41,6 +41,7 @@
         <h2 id="chat-h">Chat</h2>
         <button type="button" id="ai-btn" class="pill-button" title="AI settings"><span id="ai-label" class="pill"></span></button>
         <span class="spacer"></span>
+        <button type="button" id="undo-reply-btn" title="Put every file back as it was before the AI's last reply" disabled>Undo reply</button>
         <button type="button" id="new-chat-btn" disabled>New chat</button>
       </div>
       <div id="messages" class="messages" aria-live="polite"></div>
@@ -68,6 +69,7 @@
           <label class="sr" for="preview-path">Page address</label>
           <input id="preview-path" class="path" list="page-list" autocomplete="off" spellcheck="false" placeholder="/" title="The page showing. Type an address, or pick one of the site's pages, and press Enter." disabled>
           <datalist id="page-list"></datalist>
+          <button type="button" id="new-page-btn" title="Add a page to the site, as a copy of an existing one" disabled>New page</button>
         </form>
         <span class="spacer"></span>
         <button type="button" id="edit-btn" aria-pressed="false" title="Click things in the preview to point the AI at them, and double-click text to change it" disabled>Edit on page</button>
@@ -97,6 +99,8 @@
       <div class="pane-head">
         <h2 id="files-h">Changed files</h2>
         <span id="changes-count" class="pill" hidden></span>
+        <span class="spacer"></span>
+        <button type="button" id="browse-btn" title="Look through every file in the site" disabled>All files</button>
       </div>
       <div id="changes" class="changes-list"></div>
     </section>
@@ -128,6 +132,57 @@
       <div class="actions">
         <button type="button" id="settings-cancel">Cancel</button>
         <button type="submit" id="settings-save" class="primary">Save and run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="browse-dialog" class="wide">
+    <h2>Files in this site</h2>
+    <label class="sr" for="browse-filter">Filter by name</label>
+    <input id="browse-filter" type="search" placeholder="Filter by name, for example: images or .css" spellcheck="false" autocomplete="off">
+    <p id="browse-count" class="muted"></p>
+    <ul id="browse-list" class="upload-list browse-list"></ul>
+    <p id="browse-error" class="warning" hidden></p>
+    <div class="actions">
+      <button type="button" id="browse-close">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="link-dialog">
+    <form id="link-form" method="dialog">
+      <h2 id="link-title">Link to</h2>
+      <p class="muted" id="link-what"></p>
+      <div class="fields">
+        <label>Where should it go? <input name="to" list="page-list" required spellcheck="false" autocomplete="off" placeholder="/about.html">
+          <small>Pick one of the site's pages, or type an address: another website (https://…) or an email address.</small>
+        </label>
+      </div>
+      <p class="muted">Roadie asks the AI to make the link, so it is written the way the rest of your site is.</p>
+      <p id="link-error" class="warning" hidden></p>
+      <div class="actions">
+        <button type="button" id="link-cancel">Cancel</button>
+        <button type="submit" class="primary">Ask the AI to link it</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="page-dialog">
+    <form id="page-form" method="dialog">
+      <h2>New page</h2>
+      <p class="muted">Makes a copy of a page you already have, so the new one has the same look, menu and footer. Created on your machine only; it goes to GitHub with your next pull request.</p>
+      <div class="fields">
+        <label>Title <input name="title" maxlength="120" required placeholder="for example: Our story" autocomplete="off">
+          <small>Shown in the browser tab and as the page's main heading.</small>
+        </label>
+        <label>File name <input name="name" maxlength="80" required spellcheck="false" autocomplete="off">
+          <small id="page-address"></small>
+        </label>
+        <label>Start from a copy of <select name="from"></select></label>
+      </div>
+      <p id="page-error" class="warning" hidden></p>
+      <div class="actions">
+        <button type="button" id="page-cancel">Cancel</button>
+        <button type="submit" class="primary">Create page</button>
       </div>
     </form>
   </dialog>
@@ -194,6 +249,9 @@
             <small>Copied into the site's folder on your machine. They show under Changed files, and go to GitHub only when you open or update a pull request.</small>
           </label>
           <datalist id="site-folders"></datalist>
+          <label class="choice" id="files-shrink-row" hidden><input type="checkbox" name="shrink" checked> Make large pictures smaller
+            <small>At most 2000 pixels on the longer side, saved again as the same kind of file. Pages load faster. Untick to add the file exactly as it is.</small>
+          </label>
         </div>
         <label class="choice"><input type="radio" name="mode" value="ai"> Only show the AI</label>
         <div class="sub" id="files-ai" hidden>

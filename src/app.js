@@ -10,13 +10,14 @@ import { detect } from './detect.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
-import { applyTextEdit, cleanPick, editRequest, locateImage, pickContext, pickLabel, sitePages } from './pageedit.js';
+import { applyTextEdit, cleanPick, editRequest, linkRequest, locateImage, newPage, pickContext, pickLabel, sitePages } from './pageedit.js';
 import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
 import { blankKind, starterFileList, writeStarter } from './starter.js';
+import { capturePage } from './screenshot.js';
 import { runTests } from './tests.js';
-import { MAX_UPLOAD_BYTES, addFile, cleanChatImages, cleanUploadPath, imageType, uploadFolders } from './uploads.js';
+import { MAX_UPLOAD_BYTES, addFile, browseFiles, cleanChatImages, cleanUploadPath, imageType, removeFile, uploadFolders } from './uploads.js';
 import { protectRoadie, sandboxAvailable } from './sandbox.js';
 import { createRestartGuard, needsRestart, watchSite } from './watcher.js';
 
@@ -30,6 +31,7 @@ const MAX_LOG_LINES = 500;
 const MAX_DIFF_CHARS = 200_000;
 const MAX_JSON_BYTES = 1_000_000;
 // Routes that carry files, and how much they may carry.
+const MAX_KEPT_ITEMS = 300; // chat lines kept per site
 const BIG_JSON = { 'POST /api/chat/send': 36_000_000 };          // up to five 5 MB images, in base64
 const RAW_BODY = { 'POST /api/files/add': MAX_UPLOAD_BYTES };    // the file's own bytes
 
@@ -74,6 +76,28 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
   const restartGuard = createRestartGuard();
   let restartsPaused = false;
   let chat = null; // the conversation with the AI about the open site
+  let viewing = '/';       // the page the owner has in the preview, as the browser last said
+  let beforeReply = null;  // { dir, tree }: the files as they were before the AI's last reply
+  let undone = false;      // the owner undid a reply the AI still believes it made
+  let history = [];        // the chat about the open site so far, kept across restarts
+
+  // Each site's chat is kept in Roadie's own folder, never in the site's repo.
+  const chatFile = (s) => path.join(home, 'chats', `${s.owner}__${s.repo}.json`.replace(/[^A-Za-z0-9._-]/g, '_'));
+  function loadHistory(s) {
+    try {
+      const saved = JSON.parse(fs.readFileSync(chatFile(s), 'utf8'));
+      return Array.isArray(saved.items) ? saved.items.filter((i) => i && typeof i.text === 'string' && typeof i.role === 'string').slice(-MAX_KEPT_ITEMS) : [];
+    } catch { return []; }
+  }
+  function saveHistory() {
+    if (!site) return;
+    const items = (chat ? chat.items : history).slice(-MAX_KEPT_ITEMS);
+    try {
+      if (!items.length) return fs.rmSync(chatFile(site), { force: true });
+      fs.mkdirSync(path.dirname(chatFile(site)), { recursive: true });
+      fs.writeFileSync(chatFile(site), JSON.stringify({ site: site.key, items }), { mode: 0o600 });
+    } catch { /* the chat still works; it is just not kept */ }
+  }
   let ai = config.getAi();
   const logs = [];
   const clients = new Set();
@@ -94,7 +118,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       starterFiles: starterFileList(),
       knownSites: config.siteKeys(),
       ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
-      chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
+      chat: { canUndo: !!(beforeReply && site && beforeReply.dir === site.dir), items: chat ? chat.items : history, busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
       preview: {
         state: s.state,
         mode: s.mode,
@@ -167,9 +191,14 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     });
   }
 
-  function endChat() {
+  // `forget` is New chat: the list is cleared. Otherwise what was said stays on
+  // screen, and the next AI process is told about it in brief.
+  function endChat({ forget = false } = {}) {
+    if (forget) history = [];
+    else if (chat) history = chat.items.slice();
     chat?.close();
     chat = null;
+    if (forget) saveHistory();
   }
 
   async function ensureChat() {
@@ -184,7 +213,20 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         await flow.recordTests(started, result).catch(() => {});
         return result;
       };
-      chat = createChat({ sdk, z, gitops, site, ai, runTests: runAndRecord, emit: (update) => send('chat', update) });
+      // The AI's eyes: a picture of a page of the running site, taken on this machine.
+      const lookAtPage = async ({ page, size }) => {
+        const base = snapshot().preview.directUrl;
+        const shown = page || viewing || '/';
+        const shot = await capturePage({ base, page: shown, size });
+        return { ...shot, page: shown };
+      };
+      chat = createChat({
+        sdk, z, gitops, site, ai, runTests: runAndRecord, lookAtPage, history,
+        emit: (update) => {
+          send('chat', update);
+          if (update.op === 'busy' && !update.busy) saveHistory(); // a reply has finished
+        },
+      });
     }
     return chat;
   }
@@ -218,6 +260,8 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         saved: !!saved,
         blank,
       };
+      history = loadHistory(site);
+      beforeReply = null;
       watch();
       flow.refresh().then(() => flow.notify(), () => flow.notify());
     } finally {
@@ -281,11 +325,49 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       const images = cleanChatImages(body.images);
       // What the owner clicked in the preview goes along as background for the AI.
       const pick = cleanPick(body.pick);
-      (await ensureChat()).send(body.text, { images, ...(pick ? { context: pickContext(pick), note: pickLabel(pick) } : {}) });
+      if (typeof body.page === 'string' && body.page.startsWith('/')) viewing = body.page.slice(0, 500);
+      const ready = await ensureChat();
+      if (ready.busy) throw new Error('The AI is still working. Wait for it to finish, or press Stop.');
+      // Remember the files as they are now, so this reply can be undone as a whole.
+      beforeReply = null;
+      try {
+        if (site && await gitops.hasCommits(site.dir)) beforeReply = { dir: site.dir, tree: await gitops.treeId(site.dir) };
+      } catch { beforeReply = null; /* no snapshot: the reply cannot be undone as a whole, and the button stays off */ }
+      const context = [
+        undone ? 'The owner has undone the file changes from your last reply: the files are as they were before it. Read a file again before you rely on what you remember of it.' : '',
+        pick ? pickContext(pick) : '',
+      ].filter(Boolean).join('\n\n');
+      ready.send(body.text, { images, ...(context ? { context } : {}), ...(pick ? { note: pickLabel(pick) } : {}) });
+      undone = false;
+      pushState();
       return { ok: true };
     },
 
+    // Put the files back as they were before the AI's last reply. The edits are kept in the stash.
+    'POST /api/chat/undo': async () => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before undoing.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      if (!beforeReply || beforeReply.dir !== site.dir) throw new Error('There is no reply to undo.');
+      if (await gitops.treeId(site.dir) === beforeReply.tree) { beforeReply = null; pushState(); throw new Error('The last reply did not change any file, so there is nothing to undo.'); }
+      const result = await gitops.restoreTree(site.dir, beforeReply.tree);
+      beforeReply = null;
+      undone = true;
+      if (chat) chat.note('You undid the changes from the last reply. The files are as they were before it; the undone edits are kept in the stash.');
+      saveHistory();
+      flow.notify();
+      pushState();
+      return result;
+    },
+
     // --- Edit on page: what the owner clicked or typed in the preview ---
+    // The words to send the AI for a link chosen from the page's toolbar.
+    'POST /api/edit/link': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      const where = cleanPick(body.where);
+      if (!where) throw new Error('Malformed request.');
+      return { text: linkRequest(where, body.to) };
+    },
     // Which file is the picture they clicked?
     'POST /api/edit/locate': async (body) => {
       if (!site) throw new Error('Open a site first.');
@@ -312,6 +394,29 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       if (!site) throw new Error('Open a site first.');
       return { pages: sitePages(await gitops.listFiles(site.dir)) };
     },
+    // A new page, as a copy of an existing one. Written on this machine only.
+    'POST /api/pages/new': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before adding a page.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const made = newPage({ dir: site.dir, files: await gitops.listFiles(site.dir), from: String(body.from || ''), name: body.name, title: body.title });
+      flow.notify();
+      return made;
+    },
+    // Every file in the site, for the owner to look through.
+    'GET /api/files': async () => {
+      if (!site) throw new Error('Open a site first.');
+      return { files: browseFiles(site.dir, await gitops.listFiles(site.dir)) };
+    },
+    // The owner deletes one file by hand. It shows under Changed files, where Undo brings it back.
+    'POST /api/files/delete': async (body) => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before deleting a file.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      const removed = removeFile(site.dir, String(body.path || ''));
+      flow.notify();
+      return removed;
+    },
     'GET /api/files/folders': async () => {
       if (!site) throw new Error('Open a site first.');
       return uploadFolders(await gitops.listFiles(site.dir));
@@ -325,7 +430,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       return { ...added, ignored: ignored.has(added.path) };
     },
     'POST /api/chat/stop': async () => { await chat?.stop(); return { ok: true }; },
-    'POST /api/chat/new': async () => { endChat(); pushState(); return snapshot(); },
+    'POST /api/chat/new': async () => { endChat({ forget: true }); beforeReply = null; pushState(); return snapshot(); },
 
     'GET /api/changes': async () => {
       if (!site) return { files: [] };

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { z } from 'zod';
 import {
-  ALLOWED_TOOLS, NO_CHANGE_NOTE, STANDING_INSTRUCTIONS, TOOL_ALIASES, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, searchFiles,
+  ALLOWED_TOOLS, NO_CHANGE_NOTE, STANDING_INSTRUCTIONS, TOOL_ALIASES, agentEnv, agentOptions, aiStatus, checkToolUse, createChat, globToRegExp, recallOf, searchFiles,
 } from '../src/agent.js';
 import { cleanAi, createConfig } from '../src/config.js';
 import { isSecretPath } from '../src/guards.js';
@@ -124,7 +124,7 @@ test('the options handed to the SDK lock the agent down', async (t) => {
   assert.deepEqual(options.settingSources, [], "this machine's Claude settings and CLAUDE.md are not loaded");
   assert.equal(options.strictMcpConfig, true);
   assert.deepEqual(Object.keys(options.mcpServers), ['roadie']);
-  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests']);
+  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests', 'look_at_page']);
   assert.equal(options.model, 'claude-test');
   assert.equal(options.systemPrompt.preset, 'claude_code');
   assert.equal(options.systemPrompt.append, STANDING_INSTRUCTIONS);
@@ -162,6 +162,24 @@ test('run_tests takes no arguments and runs only the saved command', async (t) =
   assert.deepEqual(ran, [{ dir: s.dir, command: 'npm test' }]);
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /FAILED \(exit 1\)[\s\S]*1 failing/);
+});
+
+test('look_at_page hands the AI a picture, or a plain reason why not', async (t) => {
+  const s = site(t);
+  const asked = [];
+  const lookAtPage = async (input) => { asked.push(input); if (input.page === '/down') throw new Error('The site is not running.'); return { png: Buffer.from('PNG'), width: 390, height: 1400, page: input.page || '/' }; };
+  const options = agentOptions({ sdk: fakeSdk(), z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), lookAtPage });
+  const look = options.mcpServers.roadie.tools.find((x) => x.name === 'look_at_page').handler;
+  const shown = await look({ page: '/about.html', size: 'phone' });
+  assert.deepEqual(asked[0], { page: '/about.html', size: 'phone' });
+  assert.match(shown.content[0].text, /\/about\.html at 390 pixels wide/);
+  assert.deepEqual(shown.content[1], { type: 'image', data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' });
+  const failed = await look({ page: '/down' });
+  assert.equal(failed.isError, true);
+  assert.match(failed.content[0].text, /not running/);
+  // It is one of Roadie's own tools: allowed, and it takes no file path.
+  assert.ok(ALLOWED_TOOLS.includes('mcp__roadie__look_at_page'));
+  assert.equal(checkToolUse(s.dir, 'mcp__roadie__look_at_page', { page: 'https://example.com' }), null);
 });
 
 test('listing and searching skip ignored files and secrets', async (t) => {
@@ -285,6 +303,8 @@ test('a reply that claims a change without making one is flagged', async (t) => 
     edited: [use('c', 'Edit', { file_path: 'index.html' }), got('c'), say('I have updated the heading.'), end],
     aliased: [use('d', 'mcp__roadie__write', { file_path: 'new.html' }), got('d'), say("I've added the page."), end],
     answered: [say('The heading is in index.html. I can change it if you like.'), end],
+    // Seen with a real model: recounting an earlier change, with no tool used, is not a claim.
+    recounted: [say('Last time I updated the heading in index.html, as you asked.'), end],
   };
   const sdk = fakeSdk((content) => replies[content]);
   process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
@@ -302,8 +322,44 @@ test('a reply that claims a change without making one is flagged', async (t) => 
   assert.equal(await flagged('edited'), false);
   assert.equal(await flagged('aliased'), false, 'a change made under a mistaken tool name still counts');
   assert.equal(await flagged('answered'), false, 'an answer that claims nothing is left alone');
+  assert.equal(await flagged('recounted'), false, 'talk about an earlier change, with no tool used, is left alone');
   assert.equal(await flagged('claimed'), true, 'an earlier real edit does not excuse a later reply');
   assert.equal(chat.items.find((i) => i.role === 'tool' && i.text.startsWith('Write')).text, 'Write new.html', 'shown by its real name');
+});
+
+test('an earlier chat is shown again after a restart, and the new AI process is told the gist', async (t) => {
+  const s = site(t);
+  const turns = [];
+  const sdk = fakeSdk((content) => { turns.push(content); return [{ type: 'assistant', parent_tool_use_id: null, message: { content: [{ type: 'text', text: 'On it.' }] } }, { type: 'result', subtype: 'success' }]; });
+  process.env.ANTHROPIC_API_KEY = 'sk-test-not-real';
+  t.after(() => { delete process.env.ANTHROPIC_API_KEY; });
+  const history = [
+    { id: 4, role: 'user', text: 'Make the heading red' },
+    { id: 5, role: 'tool', text: 'Edit index.html', status: 'running' },
+    { id: 6, role: 'assistant', text: 'x'.repeat(700) },
+    { id: 7, role: 'note', text: 'Stopped.' },
+  ];
+  assert.equal(recallOf([]), '');
+  assert.equal(recallOf([{ role: 'tool', text: 'Read a' }]), '', 'nothing said, nothing to recall');
+
+  const chat = createChat({ sdk, z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), emit: () => {}, history });
+  t.after(() => chat.close());
+  assert.deepEqual(chat.items.map((i) => [i.id, i.role, i.status]), [[4, 'user', undefined], [5, 'tool', 'stopped'], [6, 'assistant', undefined], [7, 'note', undefined]], 'a tool that was cut off is not left spinning');
+  assert.equal(history[1].status, 'running', 'the saved list itself is not altered');
+
+  chat.send('Now make it blue');
+  await settle();
+  assert.deepEqual(chat.items.slice(4).map((i) => [i.id, i.role]), [[8, 'note'], [9, 'user'], [10, 'assistant']], 'ids carry on from the saved ones');
+  assert.match(chat.items[4].text, /started afresh/);
+  assert.match(turns[0], /^Now make it blue\n\n<background from="Roadie">\nYou were restarted/);
+  assert.match(turns[0], /Owner: Make the heading red\nYou: x{600}…\n/, 'long replies are cut short');
+  assert.doesNotMatch(turns[0], /Stopped\.|Edit index\.html/, 'only what was said');
+
+  // Told once: the second message carries no recap.
+  chat.send('And bigger');
+  await settle();
+  assert.equal(turns[1], 'And bigger');
+  assert.equal(chat.items.filter((i) => /started afresh/.test(i.text)).length, 1);
 });
 
 test('errors and Stop are reported plainly', async (t) => {

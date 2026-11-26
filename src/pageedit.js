@@ -7,6 +7,7 @@
 // handed to the AI as an exact instruction.
 import fs from 'node:fs';
 import { checkSitePath, isSecretPath } from './guards.js';
+import { addFile, cleanUploadPath } from './uploads.js';
 
 // Files whose text is page text, where a reworded sentence can be swapped in.
 const MARKUP = /\.(html?|xhtml|njk|nunjucks|ejs|hbs|handlebars|mustache|liquid|php|erb|twig|vue|svelte|astro)$/i;
@@ -173,6 +174,39 @@ export function sitePages(files) {
   return out.filter((p, i) => out.findIndex((q) => q.path === p.path) === i).slice(0, 300);
 }
 
+// A file name for a page from the words the owner typed: "Our Story" is our-story.html.
+export function pageFileName(name) {
+  const typed = String(name || '').trim();
+  const ext = (typed.match(/\.html?$/i) || ['.html'])[0].toLowerCase();
+  const stem = typed.replace(/\.html?$/i, '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  if (!stem) throw new Error('Give the page a name, such as "about".');
+  return stem + ext;
+}
+
+// Make a new page as a copy of an existing one, next to it, with its title and
+// main heading changed. Never replaces a file. Returns { file, path, from }.
+export function newPage({ dir, files, from, name, title }) {
+  const pages = sitePages(files);
+  const source = pages.find((p) => p.file === from) || pages.find((p) => p.path === from);
+  if (!source) throw new Error('Choose one of the site\'s pages to start from.');
+  const read = readText(dir, source.file);
+  if (!read) throw new Error(`${source.file} could not be read as text.`);
+  // Beside the page it copies, or beside the home page when that page is a folder's index.
+  const folder = source.file.includes('/') ? source.file.slice(0, source.file.lastIndexOf('/')) : '';
+  const rel = cleanUploadPath(folder, pageFileName(name));
+  let text = read.text;
+  const heading = String(title || '').trim().slice(0, 200);
+  if (heading) {
+    const safe = encode(heading);
+    text = text.replace(/(<title[^>]*>)[^<]*(<\/title>)/i, (_m, a, b) => a + safe + b)
+      .replace(/(<h1[^>]*>)[^<]*(<\/h1>)/i, (_m, a, b) => a + safe + b);
+  }
+  const added = addFile(dir, rel, Buffer.from(text, 'utf8'));
+  const made = sitePages([...files, added.path]).find((p) => p.file === added.path);
+  return { file: added.path, path: made ? made.path : '/' + added.path, from: source.file };
+}
+
 // Which file in the site is the picture at this address? Null unless exactly one fits.
 export function locateImage(files, urlPath) {
   let p = '';
@@ -191,6 +225,7 @@ export function cleanPick(pick) {
   if (!pick || typeof pick !== 'object') return null;
   const out = { page: clip(pick.page, 300) || '/', tag: clip(pick.tag, 30).toLowerCase().replace(/[^a-z0-9-]/g, ''), selector: clip(pick.selector, 300), text: clip(pick.text, 200), html: clip(pick.html, 400) };
   if (!out.tag) return null;
+  if (typeof pick.link === 'string' && pick.link) out.link = clip(pick.link, 300);
   if (pick.image && typeof pick.image === 'object') {
     out.image = { alt: clip(pick.image.alt, 200), attr: clip(pick.image.attr, 300), path: clip(pick.image.path, 300), file: clip(pick.image.file, 300) };
   }
@@ -211,6 +246,7 @@ export function pickContext(pick) {
     `Element: <${pick.tag}>, found by the CSS path: ${pick.selector}`,
   ];
   if (pick.text) lines.push(`Its text: ${JSON.stringify(pick.text)}`);
+  if (pick.link) lines.push(`It is, or is inside, a link to: ${JSON.stringify(pick.link)}`);
   if (pick.image) {
     lines.push(`It is an image. src attribute: ${JSON.stringify(pick.image.attr)}; alt text: ${JSON.stringify(pick.image.alt)}`);
     if (pick.image.file) lines.push(`The image file in the site: ${pick.image.file}`);
@@ -218,6 +254,29 @@ export function pickContext(pick) {
   if (pick.html) lines.push(`Its HTML as the browser has it (the source file may be laid out differently, or come from a template): ${pick.html}`);
   lines.push('Find it in the site\'s files before changing anything.');
   return lines.join('\n');
+}
+
+// Where a link may go, tidied: a page of this site, a web address, an email
+// address, a phone number or a place on the same page. Throws in plain words.
+export function linkTarget(typed) {
+  const t = String(typed ?? '').trim();
+  if (!t) throw new Error('Choose a page, or type an address.');
+  // eslint-disable-next-line no-control-regex
+  if (t.length > 500 || /[\u0000-\u0020"<>`]/.test(t)) throw new Error('That address has a space or a character that cannot be in a link.');
+  if (/^(https?:\/\/|mailto:|tel:)[^\s]+$/i.test(t)) return t;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(t)) throw new Error('A link can go to a page of this site, an https address, an email address (mailto:) or a phone number (tel:).');
+  if (/^[^\s@/]+@[^\s@/]+\.[^\s@/]+$/.test(t)) return `mailto:${t}`;
+  if (t.startsWith('#') || t.startsWith('/')) return t.startsWith('//') ? '/' + t.replace(/^\/+/, '') : t;
+  if (/^(www\.)[^\s/]+\.[a-z]{2,}/i.test(t)) return `https://${t}`;
+  return '/' + t;
+}
+
+// The request to the AI for a link the owner asked for from the page's toolbar.
+export function linkRequest(pick, typed) {
+  const to = linkTarget(typed);
+  return pick.link
+    ? `Change where this link goes: from ${JSON.stringify(pick.link)} to ${JSON.stringify(to)}. Change only this link, and write the address the way the site's other links are written.`
+    : `Make this a link to ${JSON.stringify(to)}. Write the address the way the site's other links are written, keep the element looking the way it does now apart from being a link, and change nothing else.`;
 }
 
 // A text edit that could not be applied directly, as a message for the AI.

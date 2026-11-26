@@ -21,7 +21,7 @@ const SITE_FILES = {
   'slow-check.js': 'setTimeout(() => require("./check.js"), 400);\n',
 };
 
-function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15 } = {}) {
+function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15, flowOptions = {} } = {}) {
   const root = tmpDir(t);
   const remote = createRemote(root, files);
   const dir = remote.clone(path.join(root, 'sites', 'acme', 'site'));
@@ -47,6 +47,7 @@ function setup(t, { files = SITE_FILES, settings = {}, health, pollMs = 15 } = {
       return { ok: true, status: 200, text: async () => body };
     },
     pollMs,
+    ...flowOptions,
   });
   t.after(() => flow.stop());
   const edit = (name, content) => writeFiles(dir, { [name]: content });
@@ -360,6 +361,35 @@ test('a repo with no checks can still be merged, with a warning', async (t) => {
   assert.equal(v.next.id, 'merge');
   const merge = await flow.prepare('merge');
   assert.match(merge.plan.warning, /no checks/);
+});
+
+test('just after a push, a site with workflows waits for GitHub to list its checks', async (t) => {
+  // Seen on a real repo: for a few seconds after the pull request opens GitHub
+  // lists no checks at all, and Roadie offered Merge as if the repo had none.
+  let clock = 1_000_000;
+  const { github, flow, edit, go } = setup(t, {
+    files: { ...SITE_FILES, '.github/workflows/tests.yml': 'on: pull_request\n' },
+    flowOptions: { now: () => clock, checksGraceMs: 60_000, pollMs: 100_000 },
+  });
+  await flow.start({ description: 'Slow to start' });
+  edit('index.html', '<h1>s</h1>\n');
+  await flow.tests();
+  github.state.checks = () => [];
+  const { view: v } = await go('pr');
+  assert.equal(v.next.enabled, false, 'Merge is not offered yet');
+  assert.match(v.steps.find((s) => s.id === 'ci').detail, /Waiting for GitHub to start the checks/);
+  await assert.rejects(flow.prepare('merge'), /still running/);
+
+  // The checks appear and pass: now it can be merged.
+  github.state.checks = () => [{ name: 'tests', bucket: 'pass', state: 'SUCCESS', link: 'https://github.com/acme/site/actions/runs/1' }];
+  assert.equal((await flow.refresh()).next.enabled, true);
+
+  // If none ever appear, Roadie stops waiting after a while and says the repo has none.
+  github.state.checks = () => [];
+  assert.equal((await flow.refresh()).next.enabled, false);
+  clock += 61_000;
+  assert.equal((await flow.refresh()).next.enabled, true);
+  assert.match((await flow.prepare('merge')).plan.warning, /no checks/);
 });
 
 test('the release follows the newest version and refuses one that exists', async (t) => {

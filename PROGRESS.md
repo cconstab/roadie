@@ -175,10 +175,32 @@ Why archives and not `.pkg`/`.msi` installers or a single executable: those need
 
 - Try the chat with a real ANTHROPIC_API_KEY.
 - Test sandbox for Linux (bubblewrap or similar). Today Linux runs tests unsandboxed.
-- Chat history is kept in memory only; restarting Roadie starts a fresh conversation.
-- The AI cannot see the rendered page. The owner can paste a screenshot, but the AI cannot take one itself to check its own work.
-- Images added to the site are not resized or compressed; Roadie only warns above 500 KB.
-- There is no file browser: to see which images a site already has, ask the AI or look in the folder.
+- ~~Chat history is kept in memory only.~~ ~~The AI cannot see the rendered page.~~ ~~Images are not resized.~~ ~~There is no file browser.~~ All done 2026-11-26, see "Real GitHub run and build-out" below.
+- `look_at_page` shows only the top of a page (1600 pixels at desktop width); the AI cannot scroll or click.
+- The "made smaller" step re-encodes in the browser, which drops a photo's embedded data (camera, location). Good for privacy, but it is not said in the interface.
 
 - Preview: a site whose pages redirect to an absolute URL on its own port would leave the proxy. Not seen yet; handle if a real site does it.
-- Run the change bar against a real throwaway GitHub repo (ideally an empty one, to cover the first commit and the starter's workflow too).
+- ~~Run the change bar against a real throwaway GitHub repo.~~ Done 2026-11-26 on `cconstab/test`, see below.
+
+## Real GitHub run and build-out (branch `build-out`, 2026-11-26)
+
+The owner made the throwaway repo `cconstab/test` (empty, private) and asked for as much as possible to be built.
+
+**The real run.** A real Roadie (own home folder, real git and gh) driven through headless Chrome: opened the empty repo, created the starter site, made the first commit to main, started a change, ran tests, opened pull request #1, waited for CI, merged (squash, branch deleted), published release v0.1.0, finished. Then a second change (#2) with the fixes below in place. Everything on GitHub was checked with `gh` afterwards. The starter's workflow ran green there for the first time (tests on two Node versions, the Docker build, and the release run).
+
+Two faults found and fixed:
+- **Merge was offered while checks were still starting.** For a few seconds after a pull request opens GitHub lists no checks, and Roadie read that as "this repo has none". A site with workflow files now waits up to two minutes after a push for checks to appear. Confirmed on the second pull request.
+- A first release offered `v0.1.0` twice (as "patch" and "minor"). It now offers `v0.1.0` and `v1.0.0`.
+
+**Built.**
+- `look_at_page`: the AI takes a picture of a page of the running site (`src/screenshot.js`). No new dependency: it runs an installed Chrome, Edge, Chromium or Brave headless, with a throwaway profile and a rule that no host but this machine resolves, so it cannot be used to reach the internet.
+- **Undo last reply**: the working tree is snapshotted (`treeId`) before each message to the AI; `gitops.restoreTree` stashes what is there and puts the snapshot back. No commit, no branch move. The AI is told with the next message that its edits were undone.
+- **Chat kept across restarts** in `<home>/chats/<owner>__<repo>.json`. The new AI process gets the last dozen things said as background. Changing the AI model now keeps the chat on screen too. New chat deletes the file.
+- **New page** (copy of an existing page, title and first heading set), **All files** (browse, show, delete by hand), and **pictures made smaller on the way in** (browser canvas, at most 2000 pixels, same file type, only when the result is smaller).
+- The "says it changed something but did not" note no longer fires on a reply that used no tool at all (seen with a real model recounting an earlier change).
+
+- **Link** on the Edit on page toolbar (asked for by the owner: "how do you create links from one page to another?"). It opens a page picker and sends the AI an exact request; Roadie does not rewrite the HTML itself, because wrapping markup is where a direct edit goes wrong (a link inside a link, a link round a block). Addresses are limited to a page of the site, http(s), mailto and tel. In the real browser qwen3.5:9b made a paragraph a link to the chosen page, then changed it to an email address through Change link.
+
+**Verified in a real browser with the local model qwen3.5:9b:** the AI looked at the home page at phone width and described it correctly; a reply that edited one file and created another was undone exactly, leaving the owner's own new page and photo in place; a 1.8 MB, 4000-pixel photo went in at 437 KB and 2000 pixels, and unticked went in untouched; the new page appeared in the preview; the chat came back after a restart and the AI answered a question about the earlier conversation; the file browser listed no secrets and refused `.git` and `..`.
+
+**Not verified:** any of it with Claude itself (no API key here); `look_at_page` on Windows and Linux beyond the automated tests, which use whatever browser the CI machine has; Firefox and Safari for the new dialogs; a site whose deploy is live, so the Staging and Production steps have still only run against stand-ins.

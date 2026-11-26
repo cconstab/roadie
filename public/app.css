@@ -137,7 +137,8 @@ pre.plan { margin: 0 0 .6rem; padding: .5rem .6rem; background: var(--code-bg); 
   flex-wrap: wrap;
 }
 /* The address box has a row of its own under the preview's buttons, like a browser's. */
-.path-form { flex: 1 1 100%; order: 10; display: flex; }
+.path-form { flex: 1 1 100%; order: 10; display: flex; gap: .4rem; }
+.path-form button { flex: none; }
 .path { font-family: ui-monospace, monospace; font-size: .85em; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: .2rem .4rem; width: 100%; min-width: 0; }
 .path:disabled { opacity: .5; }
 .pill { padding: .05rem .5rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: .85em; white-space: nowrap; }
@@ -273,6 +274,11 @@ dialog.wide { width: min(52rem, calc(100vw - 2rem)); max-height: calc(100vh - 3r
 .upload-list img, .upload-list .no-thumb { width: 56px; height: 56px; object-fit: contain; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
 .upload-list .no-thumb { display: grid; place-items: center; color: var(--muted); font-size: .75em; text-transform: uppercase; }
 .upload-list input { width: 100%; }
+.browse-list { max-height: 55vh; }
+.browse-list li { grid-template-columns: 40px 1fr auto auto; }
+.browse-list img, .browse-list .no-thumb { width: 40px; height: 40px; }
+.browse-list .name { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: .9em; }
+#browse-filter { width: 100%; margin-bottom: .4rem; }
 .upload-list small { display: block; color: var(--muted); }
 .upload-list small.warn { color: var(--warn); }
 .pane.chat.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }

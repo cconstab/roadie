@@ -176,6 +176,7 @@ function render() {
   }
   const address = $('preview-path');
   address.disabled = !running;
+  $('new-page-btn').disabled = !site;
   // Leave the box alone while the owner is typing in it.
   if (document.activeElement !== address) address.value = running ? framePath : '';
   if (running && site && pagesFor !== site.dir) loadPages(site.dir);
@@ -242,7 +243,9 @@ function addChatItem(item) {
 function syncChat(chat) {
   const ids = new Set(chat.items.map((i) => i.id));
   for (const [id, entry] of chatItems) {
-    if (!ids.has(id)) { entry.el.remove(); chatItems.delete(id); }
+    // Roadie's own notes ("local-…") are not in the server's list; they stay until the chat is cleared.
+    const local = String(id).startsWith('local-') && chat.items.length > 0;
+    if (!ids.has(id) && !local) { entry.el.remove(); chatItems.delete(id); }
   }
   for (const item of chat.items) {
     const entry = chatItems.get(item.id);
@@ -281,6 +284,10 @@ function applyChat(update) {
   }
 }
 
+// A line from Roadie in the chat list that the AI never sees.
+let localNotes = 0;
+function addLocalNote(text) { scrollChat(() => addChatItem({ id: `local-${++localNotes}`, role: 'note', text })); }
+
 function setChatBusy(busy) {
   const was = chatBusy;
   chatBusy = busy;
@@ -295,9 +302,11 @@ function renderChatControls() {
   $('ai-label').className = 'pill' + (ai && !ai.status.ready ? ' failed' : '');
   $('chat-input').disabled = !ready;
   $('add-files-btn').disabled = !site;
+  $('browse-btn').disabled = !site;
   $('send-btn').disabled = !ready || chatBusy;
   $('stop-chat').hidden = !chatBusy;
   $('new-chat-btn').disabled = chatBusy || chatItems.size === 0;
+  $('undo-reply-btn').disabled = chatBusy || !(state.chat && state.chat.canUndo);
   $('chat-hint').textContent = !site ? 'Open a site to start.'
     : ai && !ai.status.ready ? ai.status.problem
     : chatBusy ? 'Working…' : '';
@@ -413,6 +422,8 @@ let picked = [];            // files chosen in the dialog: { file, name, url }
 const attachments = [];     // pictures waiting to go to the AI with the next message: { name, blob, url }
 const lastFolder = new Map(); // site -> the folder chosen last time
 
+const SHRINKABLE = /^image\/(png|jpeg|webp)$/; // kinds the browser can save again
+const HEAVY_BYTES = 500 * 1024;               // above this a picture slows a page down
 const fileSize = (n) => (n >= 1024 * 1024 ? (n / 1024 / 1024).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB');
 
 // A file name that is safe in a web address: lower case, no spaces or accents.
@@ -434,6 +445,7 @@ function renderPicked() {
   $('files-ai').hidden = mode !== 'ai';
   $('files-ai-note').textContent = 'For a screenshot or a design to work from. Sent to the AI with your next message, and not saved in the site.'
     + (state.ai && state.ai.provider === 'ollama' ? ' Many local models cannot see images.' : '');
+  $('files-shrink-row').hidden = !picked.some((p) => SHRINKABLE.test(p.file.type) && p.file.size > HEAVY_BYTES);
   $('files-list').replaceChildren(...picked.map((p) => {
     const li = document.createElement('li');
     let thumb;
@@ -444,10 +456,13 @@ function renderPicked() {
     name.setAttribute('aria-label', `Name for ${p.file.name}`);
     name.addEventListener('input', () => { p.name = name.value; });
     const tooBig = mode === 'site' && p.file.size > MAX_ADD_BYTES;
-    const heavy = mode === 'site' && p.url && p.file.size > 500 * 1024;
+    const shrinking = form.elements.shrink.checked;
+    const heavy = mode === 'site' && p.url && p.file.size > HEAVY_BYTES;
     const note = Object.assign(document.createElement('small'), {
       className: tooBig || heavy ? 'warn' : '',
-      textContent: fileSize(p.file.size) + (tooBig ? '. Too large to add: the limit is 25 MB.' : heavy ? '. Large for a web page: consider making it smaller first.' : ''),
+      textContent: fileSize(p.file.size) + (tooBig && !(shrinking && SHRINKABLE.test(p.file.type)) ? '. Too large to add: the limit is 25 MB.'
+        : heavy && shrinking && SHRINKABLE.test(p.file.type) ? '. Large for a web page: Roadie will make it smaller.'
+          : heavy ? '. Large for a web page: consider making it smaller first.' : ''),
     });
     box.append(name, note);
     const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Remove' });
@@ -456,7 +471,7 @@ function renderPicked() {
     return li;
   }));
   $('files-go').textContent = mode === 'ai' ? 'Show the AI' : picked.length === 1 ? 'Add to the site' : `Add ${picked.length} files to the site`;
-  $('files-go').disabled = picked.some((p) => mode === 'site' && p.file.size > MAX_ADD_BYTES);
+  $('files-go').disabled = picked.some((p) => mode === 'site' && p.file.size > MAX_ADD_BYTES && !(form.elements.shrink.checked && SHRINKABLE.test(p.file.type)));
 }
 
 const forget = (p) => { if (p.url) URL.revokeObjectURL(p.url); };
@@ -513,6 +528,22 @@ async function sendFile(p, folder, replace = false) {
   throw new Error(data.error || `Request failed (${res.status})`);
 }
 
+// Make a picture for the site lighter: at most 2000 pixels on its longer side,
+// saved again as the same kind of file. The original is kept when that would
+// not make it smaller, or when the browser cannot read it.
+async function shrinkForSite(file) {
+  if (!SHRINKABLE.test(file.type) || file.size <= HEAVY_BYTES) return file;
+  let bitmap;
+  try { bitmap = await createImageBitmap(file); } catch { return file; }
+  const scale = Math.min(1, 2000 / Math.max(bitmap.width, bitmap.height));
+  if (scale === 1 && file.type === 'image/png') { bitmap.close(); return file; } // saving a PNG again gains nothing
+  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) });
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, file.type, 0.85));
+  return blob && blob.type === file.type && blob.size < file.size ? blob : file;
+}
+
 // Shrink a picture that is too big for the AI to take: at most 2000 pixels on its
 // longer side. Small ones, and animated GIFs, go as they are.
 async function fitForAi(file) {
@@ -557,7 +588,7 @@ $('add-files-btn').addEventListener('click', () => { replaceTarget = null; $('fi
 $('file-picker').addEventListener('change', (e) => { chooseFiles(e.target.files); e.target.value = ''; });
 $('files-cancel').addEventListener('click', () => $('files-dialog').close());
 $('files-dialog').addEventListener('close', () => { picked.forEach(forget); picked = []; });
-$('files-form').addEventListener('change', (e) => { if (e.target.name === 'mode') renderPicked(); });
+$('files-form').addEventListener('change', (e) => { if (e.target.name === 'mode' || e.target.name === 'shrink') renderPicked(); });
 $('files-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = e.target;
@@ -581,7 +612,13 @@ $('files-form').addEventListener('submit', async (e) => {
     const added = [];
     const ignored = [];
     // One at a time, so a file that fails leaves the rest still listed.
+    const saved = [];
     while (picked.length) {
+      if (form.elements.shrink.checked) {
+        const before = picked[0].file.size;
+        picked[0].file = await shrinkForSite(picked[0].file);
+        if (picked[0].file.size < before) saved.push(`${picked[0].name}: ${fileSize(before)} to ${fileSize(picked[0].file.size)}`);
+      }
       const done = await sendFile(picked[0], folder);
       if (done) { added.push(done.path); if (done.ignored) ignored.push(done.path); }
       forget(picked.shift());
@@ -589,6 +626,7 @@ $('files-form').addEventListener('submit', async (e) => {
     }
     $('files-dialog').close();
     refreshChanges(0);
+    if (saved.length) addLocalNote(`Made smaller on the way in. ${saved.join('; ')}.`);
     if (ignored.length) showProblem(`${ignored.join(', ')} ${ignored.length === 1 ? 'is' : 'are'} in a folder the site's .gitignore leaves out, so ${ignored.length === 1 ? 'it' : 'they'} will not be part of a change. Choose another folder if ${ignored.length === 1 ? 'it belongs' : 'they belong'} in the site.`);
     const input = $('chat-input');
     if (replacing && added.length) {
@@ -632,6 +670,52 @@ $('chat-input').addEventListener('paste', (e) => {
   chooseFiles(files, { pasted: true });
 });
 
+// --- all the site's files ---------------------------------------------------------
+
+let browseFilesList = [];
+
+function renderBrowse() {
+  const want = $('browse-filter').value.trim().toLowerCase();
+  const shown = browseFilesList.filter((f) => f.path.toLowerCase().includes(want));
+  $('browse-count').textContent = `${shown.length} of ${browseFilesList.length} files. Ignored files and secrets are not listed.`;
+  $('browse-list').replaceChildren(...shown.slice(0, 400).map((f) => {
+    const li = document.createElement('li');
+    let thumb;
+    if (f.image) { thumb = Object.assign(document.createElement('img'), { src: `/api/file?path=${encodeURIComponent(f.path)}`, alt: '', loading: 'lazy' }); }
+    else thumb = span((f.path.includes('.') ? f.path.split('.').pop() : 'file').slice(0, 5), 'no-thumb');
+    const box = document.createElement('div');
+    box.append(span(f.path, 'name'), Object.assign(document.createElement('small'), { textContent: fileSize(f.size) }));
+    const page = sitePageList.find((p) => p.file === f.path);
+    const show = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Show', hidden: !page || !frameUrl, title: 'Show this page in the preview' });
+    show.addEventListener('click', () => { $('browse-dialog').close(); goToPage(page.path); });
+    const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Delete' });
+    drop.addEventListener('click', async () => {
+      if (!confirm(`Delete ${f.path} from the site?\n\nA file that was already part of the site then shows under Changed files, where Undo brings it back. A file you added since the last change is gone for good.`)) return;
+      $('browse-error').hidden = true;
+      try {
+        await api('POST', '/api/files/delete', { path: f.path });
+        browseFilesList = browseFilesList.filter((x) => x !== f);
+        renderBrowse();
+        refreshChanges(0);
+      } catch (err) { $('browse-error').textContent = err.message; $('browse-error').hidden = false; }
+    });
+    li.append(thumb, box, show, drop);
+    return li;
+  }));
+}
+
+$('browse-btn').addEventListener('click', async () => {
+  try {
+    [browseFilesList, sitePageList] = await Promise.all([api('GET', '/api/files').then((r) => r.files), api('GET', '/api/pages').then((r) => r.pages)]);
+  } catch (err) { return showProblem(err.message); }
+  $('browse-filter').value = '';
+  $('browse-error').hidden = true;
+  renderBrowse();
+  $('browse-dialog').showModal();
+});
+$('browse-filter').addEventListener('input', renderBrowse);
+$('browse-close').addEventListener('click', () => $('browse-dialog').close());
+
 // --- the address box above the preview ------------------------------------------
 
 let pagesFor = null; // the site whose pages are in the list
@@ -643,6 +727,56 @@ async function loadPages(slug) {
     $('page-list').replaceChildren(...pages.map((p) => Object.assign(document.createElement('option'), { value: p.path, label: p.file })));
   } catch { pagesFor = null; /* the box still takes a typed address */ }
 }
+
+let sitePageList = []; // [{ path, file }] as last loaded
+
+// "Our Story" becomes our-story.html, the way the server will name it.
+function pageNameFor(title) {
+  const stem = String(title).normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return stem ? `${stem}.html` : '';
+}
+
+$('new-page-btn').addEventListener('click', async () => {
+  const form = $('page-form');
+  form.reset();
+  $('page-error').hidden = true;
+  form.dataset.typedName = '';
+  try { sitePageList = (await api('GET', '/api/pages')).pages; } catch (err) { return showProblem(err.message); }
+  if (!sitePageList.length) return showProblem('This site has no HTML page to copy yet. Ask the AI to make the first one.');
+  form.elements.from.replaceChildren(...sitePageList.map((p) => Object.assign(document.createElement('option'), { value: p.file, textContent: `${p.path}  (${p.file})` })));
+  // The page on screen is the likeliest one to copy.
+  const showing = sitePageList.find((p) => p.path === framePath.split(/[?#]/)[0]);
+  if (showing) form.elements.from.value = showing.file;
+  $('page-address').textContent = 'Letters, numbers and dashes. This is the page\'s address.';
+  $('page-dialog').showModal();
+});
+$('page-cancel').addEventListener('click', () => $('page-dialog').close());
+$('page-form').addEventListener('input', (e) => {
+  const form = $('page-form');
+  if (e.target.name === 'name') form.dataset.typedName = '1';
+  if (e.target.name === 'title' && !form.dataset.typedName) form.elements.name.value = pageNameFor(form.elements.title.value);
+});
+$('page-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = $('page-form');
+  const problem = $('page-error');
+  problem.hidden = true;
+  try {
+    const made = await api('POST', '/api/pages/new', { from: form.elements.from.value, name: form.elements.name.value, title: form.elements.title.value });
+    $('page-dialog').close();
+    refreshChanges(0);
+    loadPages(pagesFor);
+    if (frameUrl) setTimeout(() => goToPage(made.path), 300);
+    const input = $('chat-input');
+    if (!input.value.trim()) {
+      input.value = `I made a new page, ${made.file}, as a copy of ${made.from}. Add a link to it in the menu on every page, and change its content to: `;
+      if (!input.disabled) input.focus();
+    }
+  } catch (err) {
+    problem.textContent = err.message;
+    problem.hidden = false;
+  }
+});
 
 // Show another page of the site in the preview. Edit on page stays as it is.
 function goToPage(typed) {
@@ -670,7 +804,7 @@ $('preview-path').addEventListener('keydown', (e) => { if (e.key === 'Escape') {
 let editMode = false;
 let pick = null;           // what the owner is pointing at, sent with the next message
 let replaceTarget = null;  // { file, page } while a clicked picture is being replaced
-const EDIT_HINT = 'Click something on the page for its toolbar: replace a picture, change text, ask the AI, or delete. Double-click text to change it straight away. Links and buttons on the page do not work while this is on.';
+const EDIT_HINT = 'Click something on the page for its toolbar: replace a picture, change text, make a link, ask the AI, or delete. Double-click text to change it straight away. Links and buttons on the page do not work while this is on.';
 
 function tellFrame(message) {
   const frame = $('frame');
@@ -748,21 +882,56 @@ async function pageAction(action, next) {
     input.classList.add('nudge');
     return;
   }
+  if (action === 'link') {
+    const form = $('link-form');
+    form.reset();
+    $('link-error').hidden = true;
+    $('link-title').textContent = next.link ? 'Change this link' : 'Link to';
+    $('link-what').textContent = next.link ? `It goes to ${next.link} now.` : `${next.image ? 'This picture' : `“${(next.text || `<${next.tag}>`).slice(0, 60)}”`} will become a link.`;
+    if (pagesFor) loadPages(pagesFor);
+    linkFor = next;
+    $('link-dialog').showModal();
+    return;
+  }
   if (action !== 'delete') return;
-  const request = 'Remove this element from the page. Tidy up anything that is left empty or broken by taking it out.';
+  askAboutPick(next, 'Remove this element from the page. Tidy up anything that is left empty or broken by taking it out.',
+    'Asked the AI to remove it. Use Undo last reply if it takes out too much.', 'A request to remove it is in the message box: press Send when you are ready.');
+}
+
+// Send the AI a request about the element being pointed at, or, when the
+// message box is in use or the AI is busy, leave the request there to send later.
+async function askAboutPick(next, request, sentText, waitingText) {
+  const status = $('edit-status');
+  const input = $('chat-input');
   if (input.disabled || chatBusy || input.value.trim() || attachments.length) {
     input.value = (input.value.trim() ? input.value.trim() + '\n\n' : '') + request;
-    status.textContent = 'A request to remove it is in the message box: press Send when you are ready.';
+    status.textContent = waitingText;
     return;
   }
   try {
-    await api('POST', '/api/chat/send', { text: request, images: [], pick: next });
-    status.textContent = 'Asked the AI to remove it. Use Undo in the changed files if it takes out too much.';
+    await api('POST', '/api/chat/send', { text: request, images: [], page: framePath, pick: next });
+    status.textContent = sentText;
     if (pick === next) clearPick();
   } catch (err) {
     showProblem(err.message);
   }
 }
+
+let linkFor = null; // the element the link dialog is about
+$('link-cancel').addEventListener('click', () => $('link-dialog').close());
+$('link-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const problem = $('link-error');
+  problem.hidden = true;
+  try {
+    const { text } = await api('POST', '/api/edit/link', { where: linkFor, to: $('link-form').elements.to.value });
+    $('link-dialog').close();
+    await askAboutPick(linkFor, text, 'Asked the AI to make the link. Use Undo last reply if it is not what you wanted.', 'A request to make the link is in the message box: press Send when you are ready.');
+  } catch (err) {
+    problem.textContent = err.message;
+    problem.hidden = false;
+  }
+});
 
 // Text was changed on the page: have Roadie write it to the site's file, or
 // put a request for the AI in the message box when it cannot tell where.
@@ -1230,7 +1399,11 @@ function showPlan(prepared) {
   if (action === 'release') {
     const row = document.createElement('div');
     row.className = 'versions';
-    for (const [kind, tag] of [['patch', plan.versions.patch], ['minor', plan.versions.minor], ['major', plan.versions.major]]) {
+    // A first release has no earlier version to step up from: offer the two usual starting points.
+    const choices = plan.versions.latest
+      ? [['patch', plan.versions.patch], ['minor', plan.versions.minor], ['major', plan.versions.major]]
+      : [['still taking shape', plan.versions.minor], ['ready for the public', plan.versions.major]];
+    for (const [kind, tag] of choices) {
       const radio = Object.assign(document.createElement('input'), { type: 'radio', name: 'tag', value: tag, checked: tag === plan.tag });
       // A different version means different notes, so the step is prepared again.
       radio.addEventListener('change', () => prepareStep('release', { tag }));
@@ -1359,7 +1532,7 @@ $('chat-form').addEventListener('submit', async (e) => {
   if (!text && pick) return; // pointing needs words: what should happen to it?
   try {
     const images = await Promise.all(attachments.map(async (a) => ({ name: a.name, data: await toBase64(a.blob) })));
-    await api('POST', '/api/chat/send', { text, images, ...(pick ? { pick } : {}) });
+    await api('POST', '/api/chat/send', { text, images, page: framePath, ...(pick ? { pick } : {}) });
     input.value = '';
     clearPick();
     for (const a of attachments) URL.revokeObjectURL(a.url);
@@ -1373,6 +1546,13 @@ $('chat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('chat-form').requestSubmit(); }
 });
 $('stop-chat').addEventListener('click', () => api('POST', '/api/chat/stop').catch((err) => showProblem(err.message)));
+$('undo-reply-btn').addEventListener('click', async () => {
+  if (!confirm("Put every file back as it was before the AI's last reply?\n\nAnything changed since then, by the AI or by you, is set aside with \"git stash\", so it can be recovered.")) return;
+  try {
+    await api('POST', '/api/chat/undo');
+    refreshChanges(0);
+  } catch (err) { showProblem(err.message); }
+});
 $('new-chat-btn').addEventListener('click', () => api('POST', '/api/chat/new').then(setState, (err) => showProblem(err.message)));
 
 $('ai-btn').addEventListener('click', showAiSettings);
@@ -1401,7 +1581,7 @@ window.addEventListener('message', (e) => {
   if (!editMode) return;
   if (data.roadie === 'pick' && data.pick) setPick(data.pick);
   else if (data.roadie === 'unpick') { pick = null; renderPointing(); }
-  else if (data.roadie === 'action' && data.pick && ['replace', 'ask', 'delete'].includes(data.action)) pageAction(data.action, data.pick);
+  else if (data.roadie === 'action' && data.pick && ['replace', 'ask', 'delete', 'link'].includes(data.action)) pageAction(data.action, data.pick);
   else if (data.roadie === 'text' && data.where) applyPageText(data);
 });
 

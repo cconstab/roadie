@@ -53,6 +53,8 @@
       text: squash(el.innerText || el.textContent).slice(0, 200),
       html: String(el.outerHTML || '').slice(0, 400),
     };
+    var link = el.closest ? el.closest('a[href]') : null;
+    if (link) out.link = String(link.getAttribute('href') || '').slice(0, 300);
     if (el.tagName === 'IMG') {
       out.image = { alt: el.getAttribute('alt') || '', attr: el.getAttribute('src') || '' };
       try { var u = new URL(el.currentSrc || el.src, location.href); if (u.origin === location.origin) out.image.path = u.pathname; } catch (e) { /* not a usable address */ }
@@ -139,6 +141,7 @@
     bar.setAttribute('aria-label', 'Roadie: change this element');
     if (el.tagName === 'IMG') bar.appendChild(barButton('Replace image', 'replace', 'Choose another picture to take the place of this one'));
     if (canRetype(el)) bar.appendChild(barButton('Edit text', 'retype', 'Change these words (the same as a double-click)'));
+    bar.appendChild(barButton(el.closest('a[href]') ? 'Change link' : 'Link', 'link', 'Choose a page for this to link to'));
     bar.appendChild(barButton('Ask AI', 'ask', 'Type what the AI should do with this'));
     bar.appendChild(barButton('Delete', 'delete', 'Ask the AI to remove this from the page'));
     document.documentElement.appendChild(chosenBox);
