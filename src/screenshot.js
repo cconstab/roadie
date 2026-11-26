@@ -16,7 +16,7 @@ export function browserCandidates(platform = process.platform, env = process.env
   if (platform === 'darwin') {
     return ['Google Chrome', 'Microsoft Edge', 'Chromium', 'Brave Browser'].flatMap((app) => [
       `/Applications/${app}.app/Contents/MacOS/${app}`,
-      path.join(env.HOME || '', `Applications/${app}.app/Contents/MacOS/${app}`),
+      path.posix.join(env.HOME || '', `Applications/${app}.app/Contents/MacOS/${app}`),
     ]);
   }
   if (platform === 'win32') {
@@ -25,7 +25,7 @@ export function browserCandidates(platform = process.platform, env = process.env
       .flatMap((exe) => roots.map((root) => path.win32.join(root, exe)));
   }
   const names = ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser', 'microsoft-edge', 'brave-browser'];
-  return String(env.PATH || '').split(':').filter(Boolean).flatMap((dir) => names.map((name) => path.join(dir, name)));
+  return String(env.PATH || '').split(':').filter(Boolean).flatMap((dir) => names.map((name) => path.posix.join(dir, name)));
 }
 
 // The browser to use, or null. ROADIE_BROWSER names one outright.

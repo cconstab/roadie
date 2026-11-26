@@ -165,8 +165,10 @@ test('one AI reply can be undone as a whole, and what it did is kept in the stas
 
   assert.deepEqual(await gitops.restoreTree(dir, before), { stashed: true });
   assert.equal(await gitops.treeId(dir), before, 'every file is as it was');
-  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), '<h1>mine</h1>\n');
-  assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), 'my notes\n');
+  // On Windows git may hand files back with its own line endings, as on any checkout.
+  const text = (name) => fs.readFileSync(path.join(dir, name), 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(text('index.html'), '<h1>mine</h1>\n');
+  assert.equal(text('notes.txt'), 'my notes\n');
   assert.equal(fs.existsSync(path.join(dir, 'ai.css')), false);
   assert.equal(fs.existsSync(path.join(dir, 'gone.txt')), false);
   assert.equal(fs.existsSync(path.join(dir, 'data/keep.json')), true, 'ignored files are left alone');
