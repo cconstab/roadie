@@ -48,7 +48,13 @@ test('taking the picture: plain errors, and the temporary files are removed', as
   assert.equal(seen.args.at(-1), 'http://127.0.0.1:8080/about.html', 'always the local site');
   assert.deepEqual([shot.png.toString(), shot.width, shot.height], ['PNG', SIZES.phone.width, SIZES.phone.height]);
   assert.equal(fs.existsSync(seen.args.find((a) => a.startsWith('--screenshot=')).slice(13)), false);
-  await assert.rejects(capturePage({ base: 'http://127.0.0.1:8080', browser: '/b', runImpl: async () => ({ code: 1, stderr: 'boom\n' }) }), /did not produce a picture of \/: boom/);
+  let runs = 0;
+  await assert.rejects(capturePage({ base: 'http://127.0.0.1:8080', browser: '/b', runImpl: async () => { runs++; return { code: 1, stderr: 'boom\n' }; } }), /did not produce a picture of \/: boom/);
+  assert.equal(runs, 2, 'a try that produced nothing is made once more');
+  // A slow first start: the second try gets the picture.
+  runs = 0;
+  const second = await capturePage({ base: 'http://127.0.0.1:8080', browser: '/b', runImpl: async (cmd, args) => { if (++runs === 2) fs.writeFileSync(args.find((a) => a.startsWith('--screenshot=')).slice(13), 'PNG'); return { code: 0, stderr: '' }; } });
+  assert.equal(second.png.toString(), 'PNG');
 });
 
 test('a real browser takes a real picture of a local page', { skip: !findBrowser() && 'no Chrome or Edge on this machine' }, async (t) => {

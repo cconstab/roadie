@@ -57,18 +57,24 @@ export function browserArgs({ url, out, profile, width, height }) {
 }
 
 // Take the picture. Resolves to { png: Buffer, width, height }, or throws in plain words.
-export async function capturePage({ base, page = '/', size = 'desktop', browser = findBrowser(), runImpl = run, timeoutMs = 30_000 }) {
+// A browser starting cold can be slow, on Windows above all, so a try that
+// produces nothing is made once more before giving up.
+export async function capturePage({ base, page = '/', size = 'desktop', browser = findBrowser(), runImpl = run, timeoutMs = 45_000, tries = 2 }) {
   if (!base) throw new Error('The site is not running, so there is no page to look at. The owner can press Run.');
   if (!browser) throw new Error('No Chrome, Edge, Chromium or Brave was found on this machine, so Roadie cannot take a picture of the page. Describe what to check and ask the owner to look.');
   const { width, height } = SIZES[size] || SIZES.desktop;
-  const url = base + cleanPagePath(page);
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-look-'));
-  const out = path.join(work, 'page.png');
-  try {
-    const result = await runImpl(browser, browserArgs({ url, out, profile: path.join(work, 'profile'), width, height }), { timeout: timeoutMs });
-    if (!fs.existsSync(out)) throw new Error(`The browser did not produce a picture of ${cleanPagePath(page)}${result.stderr ? `: ${result.stderr.trim().split('\n').slice(-2).join(' ')}` : '.'}`);
-    return { png: fs.readFileSync(out), width, height };
-  } finally {
-    fs.rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  const shown = cleanPagePath(page);
+  let said = '';
+  for (let attempt = 1; attempt <= tries; attempt++) {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'roadie-look-'));
+    const out = path.join(work, 'page.png');
+    try {
+      const result = await runImpl(browser, browserArgs({ url: base + shown, out, profile: path.join(work, 'profile'), width, height }), { timeout: timeoutMs });
+      if (fs.existsSync(out) && fs.statSync(out).size > 0) return { png: fs.readFileSync(out), width, height };
+      said = String(result.stderr || '').trim().split('\n').slice(-2).join(' ');
+    } finally {
+      try { fs.rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* a browser still letting go of its files; the system clears its temp folder */ }
+    }
   }
+  throw new Error(`The browser did not produce a picture of ${shown}${said ? `: ${said}` : '.'}`);
 }
