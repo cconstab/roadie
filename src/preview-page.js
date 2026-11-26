@@ -5,7 +5,9 @@
 //   1. Tells Roadie which page is showing, and reloads the page when a file changes.
 //   2. When "Edit on page" is switched on in Roadie: lets the owner click an
 //      element to point the AI at it, and double-click text to change it.
-//      It only reports what was clicked or typed. Roadie does the editing.
+//      A small toolbar on the clicked element offers the things that can be
+//      done to it. The page only reports what was clicked or typed. Roadie
+//      does the editing.
 // It changes styles through script only (never markup), so a strict
 // Content-Security-Policy on the site does not get in its way.
 (function () {
@@ -22,6 +24,9 @@
   var box = null;        // the outline drawn round what the pointer is over
   var editing = null;    // { el, nodes, values, html, outline } while text is being changed
   var clickTimer = null;
+  var chosen = null;     // the element last clicked, which the toolbar belongs to
+  var chosenBox = null;  // the outline that stays round it
+  var bar = null;        // the toolbar
 
   function squash(text) { return String(text || '').replace(/\s+/g, ' ').trim(); }
 
@@ -68,6 +73,88 @@
     box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
     box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
     if (!box.parentNode) document.documentElement.appendChild(box);
+  }
+
+  // A piece of Roadie's own furniture on the page. Styled through script, starting
+  // from nothing, so the site's stylesheet does not restyle it.
+  function furniture(tag, styles) {
+    var el = document.createElement(tag);
+    el.style.all = 'initial';
+    for (var key in styles) el.style[key] = styles[key];
+    return el;
+  }
+
+  function canRetype(el) {
+    var holder = withText(el);
+    return !!holder && !/^(SCRIPT|STYLE|TEXTAREA|INPUT|SELECT|OPTION)$/.test(holder.tagName);
+  }
+
+  function barButton(label, action, title) {
+    var b = furniture('button', {
+      font: '600 13px/1 system-ui, sans-serif', color: '#ffffff', background: 'transparent', cursor: 'pointer',
+      padding: '7px 9px', borderRadius: '4px', whiteSpace: 'nowrap', display: 'inline-block',
+    });
+    b.type = 'button';
+    b.textContent = label;
+    b.title = title;
+    b.setAttribute('data-roadie-action', action);
+    b.addEventListener('mouseenter', function () { b.style.background = 'rgba(255, 255, 255, 0.22)'; });
+    b.addEventListener('mouseleave', function () { b.style.background = 'transparent'; });
+    return b;
+  }
+
+  // Put the outline and the toolbar where the chosen element is now.
+  function placeChosen() {
+    if (!chosen) return;
+    if (!chosen.isConnected) return choose(null);
+    var r = chosen.getBoundingClientRect();
+    var s = chosenBox.style;
+    s.left = r.left + 'px'; s.top = r.top + 'px'; s.width = r.width + 'px'; s.height = r.height + 'px';
+    var w = bar.offsetWidth, h = bar.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    // Above the element when there is room, else below it, else just inside its top edge.
+    var top = r.top - h - 6;
+    if (top < 4) top = r.bottom + 6;
+    if (top + h > vh - 4) top = Math.max(4, Math.min(r.top + 6, vh - h - 4));
+    bar.style.top = top + 'px';
+    bar.style.left = Math.max(4, Math.min(r.left, vw - w - 4)) + 'px';
+  }
+
+  // Mark an element as the one being pointed at and show its toolbar, or clear both.
+  function choose(el) {
+    if (bar && bar.parentNode) bar.parentNode.removeChild(bar);
+    if (chosenBox && chosenBox.parentNode) chosenBox.parentNode.removeChild(chosenBox);
+    chosen = el;
+    if (!el) return;
+    chosenBox = furniture('div', {
+      position: 'fixed', pointerEvents: 'none', zIndex: '2147483646', boxSizing: 'border-box',
+      border: '2px solid #1f5fd1', borderRadius: '2px', display: 'block',
+    });
+    chosenBox.setAttribute('aria-hidden', 'true');
+    bar = furniture('div', {
+      position: 'fixed', zIndex: '2147483647', display: 'flex', gap: '2px', padding: '3px',
+      background: '#1f5fd1', borderRadius: '6px', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.35)', cursor: 'default',
+    });
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Roadie: change this element');
+    if (el.tagName === 'IMG') bar.appendChild(barButton('Replace image', 'replace', 'Choose another picture to take the place of this one'));
+    if (canRetype(el)) bar.appendChild(barButton('Edit text', 'retype', 'Change these words (the same as a double-click)'));
+    bar.appendChild(barButton('Ask AI', 'ask', 'Type what the AI should do with this'));
+    bar.appendChild(barButton('Delete', 'delete', 'Ask the AI to remove this from the page'));
+    document.documentElement.appendChild(chosenBox);
+    document.documentElement.appendChild(bar);
+    placeChosen();
+  }
+
+  function inBar(target) { return !!bar && !!target && bar.contains(target); }
+
+  function barAction(target) {
+    var button = target.closest ? target.closest('[data-roadie-action]') : null;
+    var el = chosen;
+    if (!button || !el) return;
+    var action = button.getAttribute('data-roadie-action');
+    if (action === 'retype') { choose(null); return startEditing(el, -1, -1); }
+    say({ roadie: 'action', action: action, pick: describe(el) });
   }
 
   function textNodes(el) {
@@ -119,6 +206,7 @@
       kids: el.querySelectorAll('*').length,
     };
     showBox(null);
+    choose(null);
     el.setAttribute('contenteditable', 'plaintext-only');
     if (el.contentEditable !== 'plaintext-only') el.setAttribute('contenteditable', 'true'); // older browsers
     el.style.outline = '2px solid #1f5fd1';
@@ -157,33 +245,40 @@
 
   document.addEventListener('mousemove', function (e) {
     if (!on || editing) return;
+    if (inBar(e.target)) return showBox(null);
     showBox(e.target && e.target.nodeType === 1 && e.target !== document.documentElement && e.target !== document.body ? e.target : null);
   }, true);
   document.addEventListener('mouseleave', function () { showBox(null); }, true);
-  window.addEventListener('scroll', function () { showBox(null); }, true);
+  window.addEventListener('scroll', function () { showBox(null); placeChosen(); }, true);
+  window.addEventListener('resize', placeChosen);
+  // Keep the page's focus where it is when the toolbar is pressed.
+  document.addEventListener('mousedown', function (e) { if (on && inBar(e.target)) e.preventDefault(); }, true);
 
   document.addEventListener('click', function (e) {
     if (!on) return;
     if (inEditing(e.target)) return; // placing the cursor in the text being changed
     e.preventDefault();
     e.stopPropagation();
+    if (inBar(e.target)) return barAction(e.target);
     if (editing) return stopEditing(true); // a click elsewhere finishes the text
     var target = e.target;
     if (!target || target.nodeType !== 1 || target === document.documentElement) return;
     clearTimeout(clickTimer);
     // Wait a moment: this may be the first half of a double-click.
-    clickTimer = setTimeout(function () { say({ roadie: 'pick', pick: describe(target) }); }, 280);
+    clickTimer = setTimeout(function () { choose(target); say({ roadie: 'pick', pick: describe(target) }); }, 280);
   }, true);
 
   document.addEventListener('dblclick', function (e) {
     if (!on || inEditing(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
+    if (inBar(e.target)) return;
     clearTimeout(clickTimer);
     if (e.target && e.target.nodeType === 1) startEditing(e.target, e.clientX, e.clientY);
   }, true);
 
   document.addEventListener('keydown', function (e) {
+    if (!editing && chosen && e.key === 'Escape') { choose(null); return say({ roadie: 'unpick' }); }
     if (!editing) return;
     if (e.key === 'Escape') { e.preventDefault(); stopEditing(false); }
     else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); stopEditing(true); }
@@ -193,9 +288,11 @@
   document.addEventListener('submit', function (e) { if (on) { e.preventDefault(); e.stopPropagation(); } }, true);
 
   window.addEventListener('message', function (e) {
-    if (e.source !== parent || !e.data || e.data.roadie !== 'edit') return;
+    if (e.source !== parent || !e.data) return;
+    if (e.data.roadie === 'unpick') return choose(null); // Roadie stopped pointing at it
+    if (e.data.roadie !== 'edit') return;
     on = !!e.data.on;
     document.documentElement.style.cursor = on ? 'crosshair' : '';
-    if (!on) { stopEditing(true); showBox(null); clearTimeout(clickTimer); }
+    if (!on) { stopEditing(true); showBox(null); choose(null); clearTimeout(clickTimer); }
   });
 })();

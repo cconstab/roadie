@@ -633,12 +633,21 @@ $('chat-input').addEventListener('paste', (e) => {
 let editMode = false;
 let pick = null;           // what the owner is pointing at, sent with the next message
 let replaceTarget = null;  // { file, page } while a clicked picture is being replaced
-const EDIT_HINT = 'Click something to point the AI at it. Double-click text to change it. Links and buttons on the page do not work while this is on.';
+const EDIT_HINT = 'Click something on the page for its toolbar: replace a picture, change text, ask the AI, or delete. Double-click text to change it straight away. Links and buttons on the page do not work while this is on.';
 
-function sendEditMode() {
+function tellFrame(message) {
   const frame = $('frame');
-  if (frameUrl && frame.contentWindow) frame.contentWindow.postMessage({ roadie: 'edit', on: editMode }, frameUrl);
+  if (frameUrl && frame.contentWindow) frame.contentWindow.postMessage(message, frameUrl);
 }
+
+// Stop pointing: the chip under the message box goes, and so does the toolbar on the page.
+function clearPick() {
+  pick = null;
+  renderPointing();
+  tellFrame({ roadie: 'unpick' });
+}
+
+function sendEditMode() { tellFrame({ roadie: 'edit', on: editMode }); }
 
 function setEditMode(next) {
   editMode = next;
@@ -657,12 +666,12 @@ function renderPointing() {
   parts[0].title = pick.selector;
   if (pick.image && pick.image.file) {
     const swap = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Replace image…' });
-    swap.addEventListener('click', () => { replaceTarget = { file: pick.image.file, page: pick.page }; $('file-picker').click(); });
+    swap.addEventListener('click', replacePicked);
     parts.push(swap);
   }
   const drop = Object.assign(document.createElement('button'), { type: 'button', textContent: '×', title: 'Stop pointing at this' });
   drop.setAttribute('aria-label', 'Stop pointing at this');
-  drop.addEventListener('click', () => { pick = null; renderPointing(); });
+  drop.addEventListener('click', clearPick);
   parts.push(drop);
   box.replaceChildren(...parts);
 }
@@ -676,6 +685,45 @@ async function setPick(next) {
       const { file } = await api('POST', '/api/edit/locate', { path: next.image.path });
       if (pick === next && file) { next.image.file = file; renderPointing(); }
     } catch { /* pointing still works without the file name */ }
+  }
+}
+
+function replacePicked() {
+  replaceTarget = { file: pick.image.file, page: pick.page };
+  $('file-picker').click();
+}
+
+// A button on the page's toolbar was pressed.
+async function pageAction(action, next) {
+  const status = $('edit-status');
+  const input = $('chat-input');
+  await setPick(next);
+  if (pick !== next) return; // the owner has moved on
+  if (action === 'replace') {
+    if (next.image && next.image.file) return replacePicked();
+    status.textContent = 'Roadie cannot tell which file in the site that picture is (it may come from another website). Tell the AI what to put there instead.';
+    return;
+  }
+  if (action === 'ask') {
+    status.textContent = 'Type what the AI should do with it in the message box.';
+    input.classList.remove('nudge');
+    void input.offsetWidth; // start the highlight again
+    input.classList.add('nudge');
+    return;
+  }
+  if (action !== 'delete') return;
+  const request = 'Remove this element from the page. Tidy up anything that is left empty or broken by taking it out.';
+  if (input.disabled || chatBusy || input.value.trim() || attachments.length) {
+    input.value = (input.value.trim() ? input.value.trim() + '\n\n' : '') + request;
+    status.textContent = 'A request to remove it is in the message box: press Send when you are ready.';
+    return;
+  }
+  try {
+    await api('POST', '/api/chat/send', { text: request, images: [], pick: next });
+    status.textContent = 'Asked the AI to remove it. Use Undo in the changed files if it takes out too much.';
+    if (pick === next) clearPick();
+  } catch (err) {
+    showProblem(err.message);
   }
 }
 
@@ -1276,8 +1324,7 @@ $('chat-form').addEventListener('submit', async (e) => {
     const images = await Promise.all(attachments.map(async (a) => ({ name: a.name, data: await toBase64(a.blob) })));
     await api('POST', '/api/chat/send', { text, images, ...(pick ? { pick } : {}) });
     input.value = '';
-    pick = null;
-    renderPointing();
+    clearPick();
     for (const a of attachments) URL.revokeObjectURL(a.url);
     attachments.length = 0;
     renderAttachments();
@@ -1316,6 +1363,8 @@ window.addEventListener('message', (e) => {
   // What was clicked or typed only counts while the owner has Edit on page switched on.
   if (!editMode) return;
   if (data.roadie === 'pick' && data.pick) setPick(data.pick);
+  else if (data.roadie === 'unpick') { pick = null; renderPointing(); }
+  else if (data.roadie === 'action' && data.pick && ['replace', 'ask', 'delete'].includes(data.action)) pageAction(data.action, data.pick);
   else if (data.roadie === 'text' && data.where) applyPageText(data);
 });
 

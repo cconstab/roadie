@@ -172,14 +172,19 @@ commits yet there is no stash, and Undo says it will delete the file for good.)
 it is on, links and buttons on the page do not act; switch it off to use the
 site normally.
 
-- **Click anything** to point at it. A line under the message box says what you
-  are pointing at, and your next message is about that element: "make this
-  bigger", "move this under the photo".
+- **Click anything** to point at it. A small toolbar appears on it, and a line
+  under the message box says what you are pointing at. The toolbar offers:
+  - **Replace image** (on a picture): choose another file to take its place.
+  - **Edit text** (on words): the same as a double-click, below.
+  - **Ask AI**: type what should happen to it, for example "make this bigger" or
+    "move this under the photo". Your next message is about that element.
+  - **Delete**: asks the AI to take it off the page. If you have a message half
+    written, the request is put in the message box instead of being sent.
+  Press Escape, or the × on the line under the message box, to stop pointing.
 - **Double-click text** to change it. Type, then press Enter or click elsewhere
   to keep it, or Escape to put it back. Roadie finds the old words in the site's
   files and changes only those words. The change shows under Changed files like
   any other.
-- **Click a picture**, then **Replace image…**, to put another file in its place.
 
 Roadie writes a text change itself only when it finds the old text in exactly
 one place. When the same words appear more than once, or the page's text comes
