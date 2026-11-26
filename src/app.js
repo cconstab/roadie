@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { aiStatus, createChat, draftPullRequest } from './agent.js';
 import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
+import { nextVersions } from './change.js';
 import { createFlow } from './flow.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
@@ -20,6 +21,13 @@ import { runTests } from './tests.js';
 import { MAX_UPLOAD_BYTES, addFile, browseFiles, cleanChatImages, cleanUploadPath, imageType, removeFile, uploadFolders } from './uploads.js';
 import { protectRoadie, sandboxAvailable } from './sandbox.js';
 import { createRestartGuard, needsRestart, watchSite } from './watcher.js';
+
+// A changed file as the page may see it: no secrets, and no endless diffs.
+function shownFile(f) {
+  if (isSecretPath(f.path)) return { ...f, diff: '', hidden: 'Not shown: this looks like a secrets file.' };
+  if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
+  return f;
+}
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 const PUBLIC_FILES = {
@@ -434,13 +442,33 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
 
     'GET /api/changes': async () => {
       if (!site) return { files: [] };
-      const files = (await gitops.changes(site.dir, flow.base())).map((f) => {
-        if (isSecretPath(f.path)) return { ...f, diff: '', hidden: 'Not shown: this looks like a secrets file.' };
-        if (f.diff.length > MAX_DIFF_CHARS) return { ...f, diff: f.diff.slice(0, MAX_DIFF_CHARS), hidden: 'This diff is long, so only the start is shown.' };
-        return f;
-      });
+      const files = (await gitops.changes(site.dir, flow.base())).map(shownFile);
       // Undo keeps the edits in git stash, which a repo with no commits does not have.
       return { files, undoKeeps: await gitops.hasCommits(site.dir) };
+    },
+
+    // What is merged to main on GitHub but not yet in a release: what publishing
+    // a release now would send to production. Reads from GitHub, changes nothing.
+    'GET /api/changes/unreleased': async () => {
+      if (!site) return { commits: [] };
+      const { key, dir, defaultBranch } = site;
+      let problem = null;
+      await gitops.fetch(dir).catch((err) => { problem = `Could not reach GitHub, so this may be out of date. (${err.message})`; });
+      let since = null;
+      try {
+        const published = (await gitops.releases(key)).filter((x) => !x.isDraft);
+        since = (published.find((x) => x.isLatest) || {}).tagName || null;
+      } catch (err) { problem = problem || `Could not read the releases from GitHub. (${err.message})`; }
+      if (!since) since = nextVersions(await gitops.tags(dir)).latest;
+      if (!(await gitops.remoteSha(dir, defaultBranch))) return { since, branch: defaultBranch, commits: [], more: 0, empty: true, problem };
+      const { commits, more } = await gitops.commitsBetween(dir, since, `origin/${defaultBranch}`);
+      return {
+        since, branch: defaultBranch, more, problem,
+        commits: commits.map((c) => {
+          const pr = (c.subject.match(/\(#(\d+)\)\s*$/) || c.subject.match(/^Merge pull request #(\d+)/) || [])[1];
+          return { sha: c.sha, short: c.sha.slice(0, 7), subject: c.subject, pr: pr ? Number(pr) : null, files: c.files.map(shownFile) };
+        }),
+      };
     },
 
     // Put one changed file back as it was. The edits go into git stash, so they can be recovered.

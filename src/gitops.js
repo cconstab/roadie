@@ -253,6 +253,45 @@ export function createGitOps({ run = realRun } = {}) {
       return r.code === 0 ? r.stdout.split('\n').filter(Boolean) : [];
     },
 
+    // The commits `to` has that `from` does not, newest first, each with the
+    // files it changed: [{ sha, subject, files: [{ path, from, status, diff }] }].
+    // With no `from`, everything up to `to`. Merges count as one commit, compared
+    // with the main line before them. Reads only what is already fetched.
+    async commitsBetween(dir, from, to, { limit = 30 } = {}) {
+      for (const ref of [from, to]) {
+        if (ref && !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/.test(ref)) throw new Error(`"${ref}" is not a usable commit name.`);
+      }
+      const range = from ? `${from}..${to}` : to;
+      const log = await git(dir, ['log', '--first-parent', '--format=%H%x00%s', '-z', range, '--']);
+      if (log.code !== 0) throw new Error(`Reading the commits failed: ${log.stderr.trim()}`);
+      const fields = log.stdout.split('\0');
+      const all = [];
+      for (let i = 0; i + 1 < fields.length; i += 2) all.push({ sha: fields[i].trim(), subject: fields[i + 1] });
+      const commits = [];
+      for (const c of all.slice(0, limit)) {
+        const parent = await git(dir, ['rev-parse', '--verify', '--quiet', `${c.sha}^1`]);
+        const before = parent.code === 0 ? parent.stdout.trim() : null;
+        const names = before
+          ? await git(dir, ['diff', '--name-status', '-z', '-M', before, c.sha, '--'])
+          : await git(dir, ['diff-tree', '--root', '-r', '--no-commit-id', '--name-status', '-z', c.sha]);
+        const parts = names.stdout.split('\0').filter((f) => f !== '');
+        const files = [];
+        for (let i = 0; i < parts.length; i++) {
+          const code = parts[i][0];
+          let old = null;
+          let file = parts[++i];
+          if (code === 'R' || code === 'C') { old = file; file = parts[++i]; }
+          const status = code === 'A' ? 'added' : code === 'D' ? 'deleted' : code === 'R' ? 'renamed' : 'modified';
+          const d = before
+            ? await git(dir, ['diff', '--no-color', '--no-ext-diff', '-M', before, c.sha, '--', ...(old ? [old, file] : [file])])
+            : await git(dir, ['show', '--format=', '--no-color', '--no-ext-diff', c.sha, '--', file]);
+          files.push({ path: file, from: old, status, diff: d.stdout });
+        }
+        commits.push({ ...c, files: files.sort((x, y) => x.path.localeCompare(y.path)) });
+      }
+      return { commits, more: Math.max(0, all.length - limit) };
+    },
+
     // --- local steps of a change ----------------------------------------------
 
     // New branch from the newest main. Uncommitted edits come along.

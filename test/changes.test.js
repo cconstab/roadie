@@ -188,3 +188,39 @@ test('undoing a reply needs a commit to keep the edits against', async (t) => {
   await assert.rejects(gitops.restoreTree(dir, await gitops.treeId(dir)), /no commits yet/);
   assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), 'x\n');
 });
+
+test('commitsBetween lists what one point has beyond another, commit by commit, a merge as one', async (t) => {
+  const { dir, git } = repo(t, { 'index.html': '<h1>one</h1>\n', 'old.txt': 'x\n' });
+  const gitops = createGitOps();
+  git('tag', 'v1.0.0');
+
+  // With no starting point, everything counts, the very first commit included.
+  let all = await gitops.commitsBetween(dir, null, 'main');
+  assert.deepEqual(all.commits.map((c) => [c.subject, c.files.map((f) => `${f.status} ${f.path}`)]),
+    [['first', ['added index.html', 'added old.txt']]]);
+  assert.match(all.commits[0].files[0].diff.replace(/\r\n/g, '\n'), /\+<h1>one<\/h1>/);
+  assert.deepEqual((await gitops.commitsBetween(dir, 'v1.0.0', 'main')).commits, []);
+
+  writeFiles(dir, { 'index.html': '<h1>two</h1>\n' });
+  git('commit', '-q', '-am', 'New heading (#4)');
+  git('switch', '-q', '-c', 'side');
+  writeFiles(dir, { 'about.html': 'about\n' });
+  git('add', '-A'); git('commit', '-q', '-m', 'side work');
+  fs.rmSync(path.join(dir, 'old.txt'));
+  git('commit', '-q', '-am', 'more side work');
+  git('switch', '-q', 'main');
+  git('merge', '-q', '--no-ff', '-m', 'Merge pull request #5 from acme/side', 'side');
+
+  const got = await gitops.commitsBetween(dir, 'v1.0.0', 'main');
+  assert.equal(got.more, 0);
+  assert.deepEqual(got.commits.map((c) => [c.subject, c.files.map((f) => `${f.status} ${f.path}`)]), [
+    ['Merge pull request #5 from acme/side', ['added about.html', 'deleted old.txt']],
+    ['New heading (#4)', ['modified index.html']],
+  ]);
+  assert.match(got.commits[1].files[0].diff.replace(/\r\n/g, '\n'), /-<h1>one<\/h1>\n\+<h1>two<\/h1>/);
+
+  const few = await gitops.commitsBetween(dir, null, 'main', { limit: 2 });
+  assert.equal(few.commits.length, 2);
+  assert.equal(few.more, 1);
+  await assert.rejects(gitops.commitsBetween(dir, '--output=/tmp/x', 'main'), /not a usable commit name/);
+});

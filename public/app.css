@@ -202,6 +202,13 @@ dialog h2 { font-size: 1rem; text-transform: none; letter-spacing: 0; color: var
 .pill-button .pill::after { content: " ▾"; }
 
 /* changed files */
+.tabs { display: flex; gap: .25rem; padding: .35rem .5rem 0; border-bottom: 1px solid var(--line); }
+.tabs button { border: 1px solid transparent; border-bottom: 0; border-radius: 6px 6px 0 0; background: none; padding: .25rem .6rem; color: var(--muted); margin-bottom: -1px; }
+.tabs button[aria-selected="true"] { color: inherit; border-color: var(--line); background: var(--bg); }
+.changes-list .commit { margin: .7rem 0 .3rem; font-weight: 600; overflow-wrap: anywhere; }
+.changes-list .commit:first-of-type { margin-top: .3rem; }
+.changes-list .commit small { font-weight: 400; color: var(--muted); margin-left: .35rem; }
+.changes-list .lead { margin: .3rem 0 .6rem; color: var(--muted); }
 .changes-list { flex: 1; min-height: 0; overflow: auto; padding: .4rem .5rem; }
 .changes-list details { border: 1px solid var(--line); border-radius: 6px; margin-bottom: .4rem; overflow: hidden; }
 .changes-list summary { cursor: pointer; padding: .3rem .5rem; display: flex; gap: .4rem; align-items: baseline; font-family: ui-monospace, monospace; font-size: .88em; overflow-wrap: anywhere; }

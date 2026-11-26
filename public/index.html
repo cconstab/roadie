@@ -102,7 +102,12 @@
         <span class="spacer"></span>
         <button type="button" id="browse-btn" title="Look through every file in the site" disabled>All files</button>
       </div>
-      <div id="changes" class="changes-list"></div>
+      <div class="tabs" role="tablist" aria-label="Which changes to show">
+        <button type="button" role="tab" id="tab-change" aria-selected="true" aria-controls="changes" title="The files in the change you are working on, until you finish it">This change</button>
+        <button type="button" role="tab" id="tab-release" aria-selected="false" aria-controls="unreleased" title="What is merged on GitHub but not yet released: what a release would send to production" disabled>Waiting for release</button>
+      </div>
+      <div id="changes" class="changes-list" role="tabpanel" aria-labelledby="tab-change"></div>
+      <div id="unreleased" class="changes-list" role="tabpanel" aria-labelledby="tab-release" hidden></div>
     </section>
   </main>
 

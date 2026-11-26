@@ -204,3 +204,15 @@ Two faults found and fixed:
 **Verified in a real browser with the local model qwen3.5:9b:** the AI looked at the home page at phone width and described it correctly; a reply that edited one file and created another was undone exactly, leaving the owner's own new page and photo in place; a 1.8 MB, 4000-pixel photo went in at 437 KB and 2000 pixels, and unticked went in untouched; the new page appeared in the preview; the chat came back after a restart and the AI answered a question about the earlier conversation; the file browser listed no secrets and refused `.git` and `..`.
 
 **Not verified:** any of it with Claude itself (no API key here); `look_at_page` on Windows and Linux beyond the automated tests, which use whatever browser the CI machine has; Firefox and Safari for the new dialogs; a site whose deploy is live, so the Staging and Production steps have still only run against stand-ins.
+
+## Waiting for release tab (branch `release-tab`, 2026-11-26)
+
+Asked for by the owner ("a tab with files changed in branch until merged and then files changed from branch to main or prod"). Built as two tabs on the right-hand pane: **This change** (as before) and **Waiting for release**, which lists the commits on `origin/<main>` beyond the last release, newest first, each with its files and diffs (`gitops.commitsBetween`, `GET /api/changes/unreleased`). The last release is GitHub's latest published release, else the newest version tag, else the start of the repo. A merge commit is shown as one change compared with the main line before it. At most 30 commits are listed. Secrets files are hidden as in the other list. Opening the tab fetches from GitHub and reads the releases; it never sends.
+
+This replaces pull request 7 (listing the first commit's files in the main list), which is closed: a new site's first commit now shows under Waiting for release.
+
+Also on its own branch (`staging-open-link`, pull request 8): the **Open it** link after Staging or Production went to `/api` when the health path was `/api/health`; it now goes to the site address.
+
+**Verified in a real browser against the stand-in GitHub:** empty repo; after the first commit (19 files, one commit); after a merge with no release yet; after a release ("Nothing is waiting"); two more changes merged, both listed with links to their pull requests and no Undo; back on This change the open change still listed with Undo.
+
+**Not verified:** against real GitHub; on Windows beyond the automated tests; a repo with more than 30 unreleased commits beyond the test of the count. **Not built:** a warning when production's health check reports a version other than the last release.

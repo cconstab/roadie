@@ -365,3 +365,52 @@ test('the file browser lists the site\'s files with sizes, and never a secret or
   const listed = browseFiles(dir, ['index.html', 'images/logo.png', '.env', 'innocent.txt', 'gone.txt', 'docs', '../outside.txt']);
   assert.deepEqual(listed, [{ path: 'images/logo.png', size: 7, image: true }, { path: 'index.html', size: 11, image: false }]);
 });
+
+test('waiting for release: what main has beyond the last release, with secrets hidden, and nothing sent', async (t) => {
+  let releases = [{ tagName: 'v0.9.0', isLatest: false }, { tagName: 'v1.0.0', isLatest: true }];
+  const asked = [];
+  const gitops = fakeGitOps({
+    clone: (slug, dir) => writeFiles(dir, { 'index.html': '<h1>hi</h1>' }),
+    remoteSha: () => 'a'.repeat(40),
+    releases: () => releases,
+    tags: () => ['v0.1.0', 'v0.2.0'],
+    commitsBetween: (dir, from, to) => {
+      asked.push([from, to]);
+      return { more: 0, commits: [
+        { sha: 'b'.repeat(40), subject: 'Add opening hours (#7)', files: [{ path: 'index.html', from: null, status: 'modified', diff: '+hours' }, { path: '.env', from: null, status: 'added', diff: '+PASSWORD=hunter2' }] },
+        { sha: 'c'.repeat(40), subject: 'Merge pull request #6 from acme/x', files: [] },
+        { sha: 'd'.repeat(40), subject: 'tidy', files: [] },
+      ] };
+    },
+  });
+  const { call } = await openApp(t, gitops);
+  assert.deepEqual((await call('GET', '/api/changes/unreleased')).data, { commits: [] }, 'no site open yet');
+  await call('POST', '/api/open', { repo: 'acme/site' });
+  await call('POST', '/api/preview/stop');
+
+  let { data } = await call('GET', '/api/changes/unreleased');
+  assert.equal(data.since, 'v1.0.0');
+  assert.deepEqual(asked.at(-1), ['v1.0.0', 'origin/main']);
+  assert.deepEqual(data.commits.map((c) => [c.short, c.pr]), [['bbbbbbb', 7], ['ccccccc', 6], ['ddddddd', null]]);
+  assert.equal(data.commits[0].files[0].diff, '+hours');
+  assert.match(data.commits[0].files[1].hidden, /secrets file/);
+  assert.ok(!JSON.stringify(data).includes('hunter2'));
+
+  // No release published: fall back to the newest version tag, and then to the very start.
+  releases = [];
+  ({ data } = await call('GET', '/api/changes/unreleased'));
+  assert.equal(data.since, 'v0.2.0');
+  gitops.tags = async () => [];
+  ({ data } = await call('GET', '/api/changes/unreleased'));
+  assert.equal(data.since, null);
+  assert.deepEqual(asked.at(-1), [null, 'origin/main']);
+
+  // GitHub out of reach: say so, and show what is known here.
+  gitops.fetch = async () => { throw new Error('offline'); };
+  ({ data } = await call('GET', '/api/changes/unreleased'));
+  assert.match(data.problem, /may be out of date/);
+  assert.equal(data.commits.length, 3);
+
+  const sent = gitops.calls.map((c) => c[0]).filter((n) => /push|commit$|prCreate|prMerge|releaseCreate|stage/.test(n));
+  assert.deepEqual(sent, []);
+});
