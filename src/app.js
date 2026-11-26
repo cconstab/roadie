@@ -15,6 +15,7 @@ import { createPreviewProxy } from './proxy.js';
 import { Runner } from './runner.js';
 import { openSite, parseRepo } from './sites.js';
 import { blankKind, starterFileList, writeStarter } from './starter.js';
+import { capturePage } from './screenshot.js';
 import { runTests } from './tests.js';
 import { MAX_UPLOAD_BYTES, addFile, cleanChatImages, cleanUploadPath, imageType, uploadFolders } from './uploads.js';
 import { protectRoadie, sandboxAvailable } from './sandbox.js';
@@ -74,6 +75,9 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
   const restartGuard = createRestartGuard();
   let restartsPaused = false;
   let chat = null; // the conversation with the AI about the open site
+  let viewing = '/';       // the page the owner has in the preview, as the browser last said
+  let beforeReply = null;  // { dir, tree }: the files as they were before the AI's last reply
+  let undone = false;      // the owner undid a reply the AI still believes it made
   let ai = config.getAi();
   const logs = [];
   const clients = new Set();
@@ -94,7 +98,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       starterFiles: starterFileList(),
       knownSites: config.siteKeys(),
       ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
-      chat: { items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
+      chat: { canUndo: !!(beforeReply && site && beforeReply.dir === site.dir), items: chat ? chat.items : [], busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
       preview: {
         state: s.state,
         mode: s.mode,
@@ -184,7 +188,14 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
         await flow.recordTests(started, result).catch(() => {});
         return result;
       };
-      chat = createChat({ sdk, z, gitops, site, ai, runTests: runAndRecord, emit: (update) => send('chat', update) });
+      // The AI's eyes: a picture of a page of the running site, taken on this machine.
+      const lookAtPage = async ({ page, size }) => {
+        const base = snapshot().preview.directUrl;
+        const shown = page || viewing || '/';
+        const shot = await capturePage({ base, page: shown, size });
+        return { ...shot, page: shown };
+      };
+      chat = createChat({ sdk, z, gitops, site, ai, runTests: runAndRecord, lookAtPage, emit: (update) => send('chat', update) });
     }
     return chat;
   }
@@ -281,8 +292,39 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       const images = cleanChatImages(body.images);
       // What the owner clicked in the preview goes along as background for the AI.
       const pick = cleanPick(body.pick);
-      (await ensureChat()).send(body.text, { images, ...(pick ? { context: pickContext(pick), note: pickLabel(pick) } : {}) });
+      if (typeof body.page === 'string' && body.page.startsWith('/')) viewing = body.page.slice(0, 500);
+      const ready = await ensureChat();
+      if (ready.busy) throw new Error('The AI is still working. Wait for it to finish, or press Stop.');
+      // Remember the files as they are now, so this reply can be undone as a whole.
+      beforeReply = null;
+      if (site && await gitops.hasCommits(site.dir).catch(() => false)) {
+        beforeReply = { dir: site.dir, tree: await gitops.treeId(site.dir).catch(() => null) };
+        if (!beforeReply.tree) beforeReply = null;
+      }
+      const context = [
+        undone ? 'The owner has undone the file changes from your last reply: the files are as they were before it. Read a file again before you rely on what you remember of it.' : '',
+        pick ? pickContext(pick) : '',
+      ].filter(Boolean).join('\n\n');
+      ready.send(body.text, { images, ...(context ? { context } : {}), ...(pick ? { note: pickLabel(pick) } : {}) });
+      undone = false;
+      pushState();
       return { ok: true };
+    },
+
+    // Put the files back as they were before the AI's last reply. The edits are kept in the stash.
+    'POST /api/chat/undo': async () => {
+      if (!site) throw new Error('Open a site first.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before undoing.');
+      if (flow.busy) throw new Error(`Roadie is in the middle of a step (${flow.busy}). Wait for it to finish.`);
+      if (!beforeReply || beforeReply.dir !== site.dir) throw new Error('There is no reply to undo.');
+      if (await gitops.treeId(site.dir) === beforeReply.tree) { beforeReply = null; pushState(); throw new Error('The last reply did not change any file, so there is nothing to undo.'); }
+      const result = await gitops.restoreTree(site.dir, beforeReply.tree);
+      beforeReply = null;
+      undone = true;
+      if (chat) chat.note('You undid the changes from the last reply. The files are as they were before it; the undone edits are kept in the stash.');
+      flow.notify();
+      pushState();
+      return result;
     },
 
     // --- Edit on page: what the owner clicked or typed in the preview ---

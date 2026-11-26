@@ -385,6 +385,20 @@ export function createGitOps({ run = realRun } = {}) {
       return { stashed };
     },
 
+    // Put every file back as it was when `tree` was taken with treeId(): used to
+    // undo what one AI reply did. What is there now is set aside in the stash
+    // first, so nothing is lost. No commit is made and no branch moves.
+    async restoreTree(dir, tree) {
+      if (!/^[0-9a-f]{40,64}$/.test(String(tree))) throw new Error('That is not a snapshot Roadie took.');
+      if (!(await this.hasCommits(dir))) throw new Error('This repo has no commits yet, so there is nowhere to keep the edits being undone. Make the first commit, then this works.');
+      const stash = await git(dir, ['stash', 'push', '--include-untracked', '-m', 'roadie: undo AI reply']);
+      const said = stash.stdout + stash.stderr;
+      if (stash.code !== 0) throw new Error(`Setting the edits aside failed: ${said.trim()}`);
+      const stashed = !/No local changes/i.test(said);
+      await must(git(dir, ['restore', `--source=${tree}`, '--worktree', '--', ':/']), 'Putting the files back');
+      return { stashed };
+    },
+
     // --- GitHub, through gh. Every call names the repo, so it cannot act on another. ---
 
     async repoInfo(slug) {

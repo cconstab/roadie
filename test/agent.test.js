@@ -124,7 +124,7 @@ test('the options handed to the SDK lock the agent down', async (t) => {
   assert.deepEqual(options.settingSources, [], "this machine's Claude settings and CLAUDE.md are not loaded");
   assert.equal(options.strictMcpConfig, true);
   assert.deepEqual(Object.keys(options.mcpServers), ['roadie']);
-  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests']);
+  assert.deepEqual(options.mcpServers.roadie.tools.map((x) => x.name), ['list_files', 'search_files', 'delete_file', 'move_file', 'run_tests', 'look_at_page']);
   assert.equal(options.model, 'claude-test');
   assert.equal(options.systemPrompt.preset, 'claude_code');
   assert.equal(options.systemPrompt.append, STANDING_INSTRUCTIONS);
@@ -162,6 +162,24 @@ test('run_tests takes no arguments and runs only the saved command', async (t) =
   assert.deepEqual(ran, [{ dir: s.dir, command: 'npm test' }]);
   assert.equal(result.isError, true);
   assert.match(result.content[0].text, /FAILED \(exit 1\)[\s\S]*1 failing/);
+});
+
+test('look_at_page hands the AI a picture, or a plain reason why not', async (t) => {
+  const s = site(t);
+  const asked = [];
+  const lookAtPage = async (input) => { asked.push(input); if (input.page === '/down') throw new Error('The site is not running.'); return { png: Buffer.from('PNG'), width: 390, height: 1400, page: input.page || '/' }; };
+  const options = agentOptions({ sdk: fakeSdk(), z, gitops: fakeGitOps(), site: s, ai: CLAUDE, runTests: async () => ({}), lookAtPage });
+  const look = options.mcpServers.roadie.tools.find((x) => x.name === 'look_at_page').handler;
+  const shown = await look({ page: '/about.html', size: 'phone' });
+  assert.deepEqual(asked[0], { page: '/about.html', size: 'phone' });
+  assert.match(shown.content[0].text, /\/about\.html at 390 pixels wide/);
+  assert.deepEqual(shown.content[1], { type: 'image', data: Buffer.from('PNG').toString('base64'), mimeType: 'image/png' });
+  const failed = await look({ page: '/down' });
+  assert.equal(failed.isError, true);
+  assert.match(failed.content[0].text, /not running/);
+  // It is one of Roadie's own tools: allowed, and it takes no file path.
+  assert.ok(ALLOWED_TOOLS.includes('mcp__roadie__look_at_page'));
+  assert.equal(checkToolUse(s.dir, 'mcp__roadie__look_at_page', { page: 'https://example.com' }), null);
 });
 
 test('listing and searching skip ignored files and secrets', async (t) => {

@@ -298,6 +298,7 @@ function renderChatControls() {
   $('send-btn').disabled = !ready || chatBusy;
   $('stop-chat').hidden = !chatBusy;
   $('new-chat-btn').disabled = chatBusy || chatItems.size === 0;
+  $('undo-reply-btn').disabled = chatBusy || !(state.chat && state.chat.canUndo);
   $('chat-hint').textContent = !site ? 'Open a site to start.'
     : ai && !ai.status.ready ? ai.status.problem
     : chatBusy ? 'Working…' : '';
@@ -756,7 +757,7 @@ async function pageAction(action, next) {
     return;
   }
   try {
-    await api('POST', '/api/chat/send', { text: request, images: [], pick: next });
+    await api('POST', '/api/chat/send', { text: request, images: [], page: framePath, pick: next });
     status.textContent = 'Asked the AI to remove it. Use Undo in the changed files if it takes out too much.';
     if (pick === next) clearPick();
   } catch (err) {
@@ -1363,7 +1364,7 @@ $('chat-form').addEventListener('submit', async (e) => {
   if (!text && pick) return; // pointing needs words: what should happen to it?
   try {
     const images = await Promise.all(attachments.map(async (a) => ({ name: a.name, data: await toBase64(a.blob) })));
-    await api('POST', '/api/chat/send', { text, images, ...(pick ? { pick } : {}) });
+    await api('POST', '/api/chat/send', { text, images, page: framePath, ...(pick ? { pick } : {}) });
     input.value = '';
     clearPick();
     for (const a of attachments) URL.revokeObjectURL(a.url);
@@ -1377,6 +1378,13 @@ $('chat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('chat-form').requestSubmit(); }
 });
 $('stop-chat').addEventListener('click', () => api('POST', '/api/chat/stop').catch((err) => showProblem(err.message)));
+$('undo-reply-btn').addEventListener('click', async () => {
+  if (!confirm("Put every file back as it was before the AI's last reply?\n\nAnything changed since then, by the AI or by you, is set aside with \"git stash\", so it can be recovered.")) return;
+  try {
+    await api('POST', '/api/chat/undo');
+    refreshChanges(0);
+  } catch (err) { showProblem(err.message); }
+});
 $('new-chat-btn').addEventListener('click', () => api('POST', '/api/chat/new').then(setState, (err) => showProblem(err.message)));
 
 $('ai-btn').addEventListener('click', showAiSettings);

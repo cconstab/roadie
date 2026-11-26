@@ -150,3 +150,39 @@ test('a file-system-monitor program named in the clone is never run', async (t) 
   await gitops.isClean(dir);
   assert.ok(!fs.existsSync(marker));
 });
+
+test('one AI reply can be undone as a whole, and what it did is kept in the stash', async (t) => {
+  const { dir, git } = repo(t, { 'index.html': '<h1>one</h1>\n', 'gone.txt': 'bye\n', '.gitignore': 'data/\n' });
+  const gitops = createGitOps();
+  // Before the reply: an edit, a new file and a deletion the owner already made, none committed.
+  writeFiles(dir, { 'index.html': '<h1>mine</h1>\n', 'notes.txt': 'my notes\n', 'data/keep.json': '{}' });
+  fs.rmSync(path.join(dir, 'gone.txt'));
+  const before = await gitops.treeId(dir);
+
+  // The reply: edits a file, adds one, deletes one, brings one back.
+  writeFiles(dir, { 'index.html': '<h1>AI</h1>\n', 'ai.css': 'a{}\n', 'gone.txt': 'back\n' });
+  fs.rmSync(path.join(dir, 'notes.txt'));
+
+  assert.deepEqual(await gitops.restoreTree(dir, before), { stashed: true });
+  assert.equal(await gitops.treeId(dir), before, 'every file is as it was');
+  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), '<h1>mine</h1>\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'notes.txt'), 'utf8'), 'my notes\n');
+  assert.equal(fs.existsSync(path.join(dir, 'ai.css')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'gone.txt')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'data/keep.json')), true, 'ignored files are left alone');
+  assert.match(String(git('stash', 'list')), /roadie: undo AI reply/);
+  assert.match(String(git('show', 'stash@{0}:index.html')), /AI/, 'the undone edit can be recovered');
+  assert.equal(String(git('log', '--oneline')).trim().split('\n').length, 1, 'no commit was made');
+  assert.equal(String(git('branch', '--show-current')).trim(), 'main', 'and no branch moved');
+
+  await assert.rejects(gitops.restoreTree(dir, 'HEAD; rm -rf /'), /not a snapshot/);
+});
+
+test('undoing a reply needs a commit to keep the edits against', async (t) => {
+  const dir = tmpDir(t);
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+  writeFiles(dir, { 'index.html': 'x\n' });
+  const gitops = createGitOps();
+  await assert.rejects(gitops.restoreTree(dir, await gitops.treeId(dir)), /no commits yet/);
+  assert.equal(fs.readFileSync(path.join(dir, 'index.html'), 'utf8'), 'x\n');
+});
