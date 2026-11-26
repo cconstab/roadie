@@ -613,11 +613,11 @@ export function createFlow({
       if (live || timedOut) { clearInterval(healthTimers[which]); delete healthTimers[which]; }
       config.saveChange(key, {
         ...latest,
-        [which]: { url, waitingFor: needle, seen, error, live, polling: !live && !timedOut, timedOut, checkedAt: now() },
+        [which]: { url, site: base, waitingFor: needle, seen, error, live, polling: !live && !timedOut, timedOut, checkedAt: now() },
       });
       notify();
     };
-    save({ ...r, [which]: { url, waitingFor: needle, polling: true, live: false } });
+    save({ ...r, [which]: { url, site: base, waitingFor: needle, polling: true, live: false } });
     healthTimers[which] = setInterval(check, pollMs);
     healthTimers[which].unref?.();
     check();

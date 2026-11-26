@@ -129,6 +129,9 @@ test('a whole change: branch, tests, pull request, CI, merge, staging, release, 
   assert.equal(config.getChange('acme/site').staging.seen, 'dev');
   web.staging = `{"ok":true,"version":"main-${remote.sha('main').slice(0, 7)}"}`;
   await until(() => config.getChange('acme/site').staging.live);
+  // The link offered is to the site itself, not to the address asked for its version.
+  assert.equal(config.getChange('acme/site').staging.site, 'https://staging.acme.example');
+  assert.equal((await flow.view()).staging.site, 'https://staging.acme.example');
   assert.equal(web.hits[0], 'https://staging.acme.example/api/health');
   v = await flow.view();
   assert.equal(v.stage, 'release');
