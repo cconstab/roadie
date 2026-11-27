@@ -76,8 +76,8 @@ You still need these, which Roadie checks for when it starts:
 
 - **git**, with your name and email set (on Windows: [Git for Windows](https://git-scm.com/download/win))
 - the **GitHub command-line tool `gh`**, signed in (`gh auth login`)
-- an **AI** to do the editing: an Anthropic API key in `ANTHROPIC_API_KEY`, or
-  [Ollama](https://ollama.com) with a local model
+- an **AI** to do the editing: an Anthropic API key, which you paste into
+  Roadie's AI settings once, or [Ollama](https://ollama.com) with a local model
 
 ## Setup from source
 
@@ -88,13 +88,14 @@ To run Roadie from this repo instead, you need the three things above and:
 ```sh
 git clone https://github.com/cconstab/roadie.git && cd roadie
 npm install                          # the Claude Agent SDK and zod, nothing else
-export ANTHROPIC_API_KEY=sk-ant-...  # skip this if you will use Ollama
 npm start                            # opens your browser
 ```
 
-On Windows, in PowerShell, set the key with `$env:ANTHROPIC_API_KEY = "sk-ant-..."`
-instead of `export`. The other commands are the same. git and gh can be installed
-with `winget install Git.Git GitHub.cli`.
+On Windows the commands are the same. git and gh can be installed with
+`winget install Git.Git GitHub.cli`.
+
+Then choose the AI name next to the Chat heading and paste your Anthropic API
+key into AI settings (see "Choosing the AI" below).
 
 `npm start` prints a link and opens it. Use that link: it carries a key, and
 Roadie will not show itself to a browser (or anything else on your machine) that
@@ -385,8 +386,18 @@ before running tests or the preview.
 
 The button next to the Chat heading shows which AI is in use. Click it to change.
 
-- **Claude, with an Anthropic API key.** Roadie reads `ANTHROPIC_API_KEY` from the
-  environment it was started in and never stores it. Amazon Bedrock, Google Vertex
+- **Claude, with an Anthropic API key.** Paste the key into the **API key** box
+  and choose **Save key**. Roadie keeps it in your system's own password store:
+  the Keychain on macOS, your account's protected storage on Windows (the
+  sealed text is in `~/roadie/anthropic-key.protected`, which only your Windows
+  account can unseal), and the desktop keyring on Linux where `secret-tool` is
+  installed. It is not kept in the browser or in a readable file, the page is
+  only ever told its last four characters, and a site's own preview and tests
+  are started without it. **Remove key** makes Roadie forget it. Programs you
+  run yourself under your own account could still ask the store for it, as
+  they could read an environment variable. If `ANTHROPIC_API_KEY` is set in the
+  environment Roadie starts in, that is used instead, and on Linux without
+  `secret-tool` it is the only way. Amazon Bedrock, Google Vertex
   and Microsoft Foundry work too, through the environment variables the Claude
   Agent SDK documents. You pay for what you use.
 - **A local model, with Ollama.** Give the address of your Ollama server and pick
@@ -434,8 +445,8 @@ Set `ROADIE_HOME` to use a different folder, and `ROADIE_PORT` for a different p
 ## When something goes wrong
 
 - **"gh is not signed in"**: run `gh auth login` in a terminal, then restart Roadie.
-- **"No ANTHROPIC_API_KEY was set"**: set it in the shell you start Roadie from, or
-  switch to Ollama with the AI button.
+- **"Roadie has no Anthropic API key yet"**: choose the AI name next to the Chat
+  heading and paste a key into AI settings, or switch to Ollama there.
 - **"Open Roadie from its own link"**: use the link `npm start` printed, or stop
   Roadie and start it again.
 - **The preview says the site is not answering**: open **Log** in the preview

@@ -1079,6 +1079,32 @@ function showModelOther() {
   if (!other) form.elements.model.value = form.elements.modelChoice.value;
 }
 
+// Where the Anthropic key stands. The key itself never reaches this page: only its last four characters.
+function showKeyStatus() {
+  const key = (state.ai && state.ai.key) || {};
+  $('key-status').textContent = key.fromEnv ? 'Roadie is using the API key from its environment (ANTHROPIC_API_KEY).' + (key.stored ? ` A stored key (${key.ending}) is kept too, and is used when the environment has none.` : '')
+    : key.stored ? `Roadie is using the key stored in ${key.where} (${key.ending}).`
+    : state.ai && state.ai.keyFound ? 'Roadie found a way to reach Claude in its environment.'
+    : 'Roadie has no API key yet.';
+  $('key-box').hidden = !key.canStore;
+  $('key-remove').hidden = !key.stored;
+  $('key-save').textContent = key.stored ? 'Replace key' : 'Save key';
+  $('key-note').textContent = key.problem ? `The stored key could not be read: ${key.problem}`
+    : key.canStore ? `Kept in ${key.where}, not in a file anyone can read and not in this browser. Get a key from the Anthropic Console.` : '';
+}
+
+async function changeKey(path, body) {
+  $('key-error').hidden = true;
+  try {
+    setState(await api('POST', path, body));
+    $('key-input').value = '';
+    showKeyStatus();
+  } catch (err) {
+    $('key-error').textContent = err.message;
+    $('key-error').hidden = false;
+  }
+}
+
 function showAiSettings() {
   const { ai } = state;
   if (!ai) return;
@@ -1090,9 +1116,9 @@ function showAiSettings() {
   showModelOther();
   form.elements.ollamaUrl.value = ai.ollamaUrl;
   form.elements.ollamaModel.replaceChildren(new Option(ai.ollamaModel || 'loading…', ai.ollamaModel));
-  $('key-status').textContent = ai.keyFound
-    ? 'Roadie found an API key in its environment.'
-    : 'No ANTHROPIC_API_KEY was set when Roadie started. Set it in your shell and restart Roadie.';
+  $('key-input').value = '';
+  $('key-error').hidden = true;
+  showKeyStatus();
   showAiProvider();
   $('ai-dialog').showModal();
   if (ai.provider === 'ollama') loadOllamaModels();
@@ -1629,6 +1655,12 @@ $('ai-btn').addEventListener('click', showAiSettings);
 $('ai-cancel').addEventListener('click', () => $('ai-dialog').close());
 $('ai-form').addEventListener('change', (e) => { if (e.target.name === 'modelChoice') showModelOther(); if (e.target.name === 'provider') { showAiProvider(); if (e.target.value === 'ollama') loadOllamaModels(); } });
 $('ollama-refresh').addEventListener('click', loadOllamaModels);
+$('key-save').addEventListener('click', () => changeKey('/api/ai/key', { key: $('key-input').value }));
+$('key-remove').addEventListener('click', () => {
+  if (window.confirm('Remove the stored API key?\n\nRoadie forgets it. The key itself still works until you delete it in the Anthropic Console.')) changeKey('/api/ai/key/remove');
+});
+// Enter in the key box saves the key, and does not close the dialog with the rest unsaved.
+$('key-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('key-save').click(); } });
 $('ai-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const ai = Object.fromEntries(new FormData(e.target));

@@ -92,7 +92,7 @@ export function aiStatus(ai, env = process.env) {
   return {
     ready: false,
     label: 'Claude',
-    problem: `No ANTHROPIC_API_KEY was set when Roadie started. Set it in your terminal (${process.platform === 'win32' ? '$env:ANTHROPIC_API_KEY = "..." in PowerShell' : 'export ANTHROPIC_API_KEY=...'}) and restart Roadie, or choose Ollama in AI settings.`,
+    problem: 'Roadie has no Anthropic API key yet. Choose the AI name above the chat and paste one into AI settings, or pick Ollama there. (Setting ANTHROPIC_API_KEY before starting Roadie works too.)',
   };
 }
 

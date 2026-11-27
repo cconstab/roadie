@@ -309,11 +309,18 @@
   <dialog id="ai-dialog">
     <form id="ai-form" method="dialog">
       <h2>AI settings</h2>
-      <p class="muted">Which AI edits the site. Roadie never stores keys.</p>
+      <p class="muted">Which AI edits the site.</p>
       <div class="fields">
         <label class="choice"><input type="radio" name="provider" value="anthropic"> Claude, with an Anthropic API key</label>
         <div class="sub" data-for="anthropic">
           <p id="key-status" class="muted"></p>
+          <div id="key-box">
+            <label>API key
+              <span class="row"><input id="key-input" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…"><button type="button" id="key-save">Save key</button><button type="button" id="key-remove" hidden>Remove key</button></span>
+              <small id="key-note"></small>
+            </label>
+            <p id="key-error" class="warning" hidden></p>
+          </div>
           <label>Model
             <select name="modelChoice">
               <option value="claude-fable-5-2">Claude Fable 5.2 (most capable, highest cost)</option>

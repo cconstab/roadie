@@ -9,6 +9,7 @@ import { cleanAi, cleanSettings } from './config.js';
 import { detect } from './detect.js';
 import { nextVersions } from './change.js';
 import { createFlow } from './flow.js';
+import { cleanKey, keyEnding } from './keystore.js';
 import { checkSitePath, isSecretPath } from './guards.js';
 import { guideText, hostingGuide } from './guide.js';
 import { applyTextEdit, cleanPick, editRequest, linkRequest, locateImage, newPage, pickContext, pickLabel, sitePages } from './pageedit.js';
@@ -57,7 +58,26 @@ async function loadSdk() {
 }
 
 // updater: { check(), apply(tag), stop() } from main.js; left out in tests, so they never go looking for releases.
-export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {}, updater = null }) {
+// keystore: { where, get(), set(key), remove() } from main.js; left out in tests, so they never touch a real password store.
+export async function createApp({ home, gitops, config, agentSdk = loadSdk, flowOptions = {}, updater = null, keystore = null }) {
+  // The Anthropic key, when Roadie's own environment has none: read once from the
+  // system's password store and kept in this process only. A site's own programs
+  // are started without it (see runner.js), and the browser is never sent it.
+  const keyInEnv = !!process.env.ANTHROPIC_API_KEY;
+  let storedKey = null;
+  let keyProblem = null;
+  if (keystore) {
+    try { storedKey = await keystore.get(); } catch (err) { keyProblem = err.message; }
+    if (storedKey && !keyInEnv) process.env.ANTHROPIC_API_KEY = storedKey;
+  }
+  const keyView = () => ({
+    canStore: !!keystore,
+    where: keystore ? keystore.where : null,
+    stored: !!storedKey,
+    ending: keyEnding(storedKey),
+    fromEnv: keyInEnv,
+    problem: keyProblem,
+  });
   const token = crypto.randomBytes(24).toString('base64url'); // per run; proves a request came from Roadie's own page
   // The page (and so the token) is only given to a browser that arrived with this
   // key, which is in the link Roadie prints and opens at start. That browser gets a
@@ -125,7 +145,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       site: site && { ...site },
       starterFiles: starterFileList(),
       knownSites: config.siteKeys(),
-      ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready },
+      ai: { ...ai, status: aiStatus(ai), keyFound: aiStatus({ ...ai, provider: 'anthropic' }).ready, key: keyView() },
       chat: { canUndo: !!(beforeReply && site && beforeReply.dir === site.dir), items: chat ? chat.items : history, busy: chat ? chat.busy : false, info: chat ? chat.info : null, usage: chat ? chat.usage : null },
       preview: {
         state: s.state,
@@ -510,6 +530,30 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
       pushState();
       return snapshot();
     },
+    // Keep the Anthropic key in the system's password store, or take it out again.
+    // Nothing is sent anywhere, and the key itself is never in an answer.
+    'POST /api/ai/key': async (body) => {
+      if (!keystore) throw new Error('This copy of Roadie cannot store a key. Set ANTHROPIC_API_KEY in your terminal instead.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before changing the key.');
+      const key = cleanKey(body.key);
+      await keystore.set(key);
+      storedKey = key;
+      keyProblem = null;
+      if (!keyInEnv) process.env.ANTHROPIC_API_KEY = key;
+      endChat(); // the next message starts the AI again, with the new key
+      pushState();
+      return snapshot();
+    },
+    'POST /api/ai/key/remove': async () => {
+      if (!keystore) throw new Error('There is no stored key to remove.');
+      if (chat && chat.busy) throw new Error('The AI is still working. Stop it, or wait, before changing the key.');
+      await keystore.remove();
+      storedKey = null;
+      if (!keyInEnv) delete process.env.ANTHROPIC_API_KEY;
+      endChat();
+      pushState();
+      return snapshot();
+    },
     // Install the newer release the interface is showing. Only ever started by this button.
     'POST /api/update': async () => {
       if (!updater || !update) throw new Error('There is no update to install.');
@@ -692,6 +736,7 @@ export async function createApp({ home, gitops, config, agentSdk = loadSdk, flow
     },
     address() { return server.address(); },
     async close() {
+      if (storedKey && !keyInEnv) delete process.env.ANTHROPIC_API_KEY; // it was only ever this process's
       clearInterval(ping);
       clearInterval(updateTimer);
       flow.stop();
