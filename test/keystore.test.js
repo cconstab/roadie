@@ -24,8 +24,9 @@ function fakeTools() {
     }
     if (cmd === 'powershell.exe') {
       const script = args.at(-1);
-      if (script.includes('ConvertFrom-SecureString')) return ok(Buffer.from(`sealed:${input.trim()}`).toString('hex') + '\r\n');
-      return ok(Buffer.from(input.trim(), 'hex').toString().replace(/^sealed:/, '') + '\r\n');
+      const pad = 'x'.repeat(80); // real sealed text is much longer than the key
+      if (script.includes('::Protect(')) return ok(Buffer.from(`sealed:${pad}:${input.trim()}`).toString('base64') + '\r\n');
+      return ok(Buffer.from(input.trim(), 'base64').toString().replace(`sealed:${pad}:`, '') + '\r\n');
     }
     if (cmd === 'secret-tool') {
       if (args[0] === 'store') { kept = input; return ok(); }
@@ -155,7 +156,7 @@ test('on a real Windows machine, PowerShell seals the key and gives it back', { 
   await store.set(KEY);
   const onDisk = fs.readFileSync(path.join(home, 'anthropic-key.protected'), 'utf8');
   assert.ok(!onDisk.includes(KEY));
-  assert.match(onDisk.trim(), /^[0-9a-fA-F]+$/);
+  assert.match(onDisk.trim(), /^[A-Za-z0-9+\/=]+$/);
   assert.equal(await store.get(), KEY);
   await store.remove();
   assert.equal(await store.get(), null);

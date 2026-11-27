@@ -32,10 +32,13 @@ export function cleanKey(given) {
 // Enough to recognise the key, never enough to use it.
 export const keyEnding = (key) => (key ? `…${String(key).slice(-4)}` : '');
 
-function realRun(cmd, args, { input = '', timeout = 15_000 } = {}) {
+function realRun(cmd, args, { input = '', timeout = 30_000 } = {}) {
+  // Windows PowerShell must not inherit PowerShell 7's module folders.
+  const env = { ...process.env };
+  for (const name of Object.keys(env)) if (name.toLowerCase() === 'psmodulepath') delete env[name];
   return new Promise((resolve) => {
     let child;
-    try { child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }); }
+    try { child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env }); }
     catch (err) { return resolve({ code: -1, stdout: '', stderr: err.message }); }
     let stdout = '';
     let stderr = '';
@@ -50,9 +53,12 @@ function realRun(cmd, args, { input = '', timeout = 15_000 } = {}) {
 }
 
 const POWERSHELL = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command'];
-// Both read one line from standard input and write one line back.
-const PS_PROTECT = '$ErrorActionPreference = "Stop"; $k = [Console]::In.ReadLine(); ConvertTo-SecureString -String $k -AsPlainText -Force | ConvertFrom-SecureString';
-const PS_UNPROTECT = '$ErrorActionPreference = "Stop"; $e = [Console]::In.ReadLine(); $s = ConvertTo-SecureString -String $e; [System.Net.NetworkCredential]::new("", $s).Password';
+// Both read one line from standard input and write one line back. They call
+// .NET directly and use no PowerShell commands: Windows PowerShell cannot load
+// its own command modules when it is started from inside PowerShell 7.
+const PS_LOAD = '$ErrorActionPreference = "Stop"; [void][Reflection.Assembly]::LoadWithPartialName("System.Security"); $scope = [Security.Cryptography.DataProtectionScope]::CurrentUser; ';
+const PS_PROTECT = PS_LOAD + '$k = [Console]::In.ReadLine(); $b = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UTF8.GetBytes($k), $null, $scope); [Console]::Out.WriteLine([Convert]::ToBase64String($b))';
+const PS_UNPROTECT = PS_LOAD + '$e = [Console]::In.ReadLine(); $b = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($e), $null, $scope); [Console]::Out.WriteLine([Text.Encoding]::UTF8.GetString($b))';
 
 export function createKeyStore({ home, platform = process.platform, run = realRun } = {}) {
   const file = home ? path.join(home, 'anthropic-key.protected') : null;
@@ -89,8 +95,8 @@ export function createKeyStore({ home, platform = process.platform, run = realRu
         const key = cleanKey(given);
         const r = await run('powershell.exe', [...POWERSHELL, PS_PROTECT], { input: key + '\n' });
         const sealed = r.stdout.trim();
-        // What comes back is long hexadecimal. Anything else, the key itself above all, is not written down.
-        if (r.code !== 0 || !/^[0-9a-fA-F]{64,}$/.test(sealed) || sealed.includes(key)) throw failed('Windows could not protect the key.', r);
+        // What comes back is one long line of base64. Anything else, the key itself above all, is not written down.
+        if (r.code !== 0 || !/^[A-Za-z0-9+/=]{100,}$/.test(sealed) || sealed.includes(key)) throw failed('Windows could not protect the key.', r);
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, sealed + '\n', { mode: 0o600 });
       },
