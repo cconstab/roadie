@@ -216,3 +216,11 @@ Also on its own branch (`staging-open-link`, pull request 8): the **Open it** li
 **Verified in a real browser against the stand-in GitHub:** empty repo; after the first commit (19 files, one commit); after a merge with no release yet; after a release ("Nothing is waiting"); two more changes merged, both listed with links to their pull requests and no Undo; back on This change the open change still listed with Undo.
 
 **Not verified:** against real GitHub; on Windows beyond the automated tests; a repo with more than 30 unreleased commits beyond the test of the count. **Not built:** a warning when production's health check reports a version other than the last release.
+
+## Anthropic key kept in the system's password store (branch `key-store`, 2026-11-26)
+
+Asked for by the owner: setting `ANTHROPIC_API_KEY` loses people, on Windows above all. AI settings now has an API key box. `src/keystore.js` keeps the key in the macOS Keychain (`security`), Windows DPAPI through PowerShell (sealed text in `<home>/anthropic-key.protected`), or the Linux keyring (`secret-tool`). No new dependency. The key goes to those tools on standard input, never on a command line. Roadie reads it once at start into its own process; the browser gets only the last four characters; site programs are started without it, as before. An environment key still wins.
+
+This is the first secret Roadie stores; the owner agreed. The original rule "store no GitHub tokens" is untouched.
+
+**Verified:** on this Mac with the real Keychain and a made-up key, from the module and through the dialog in a real browser (refused a bad key, saved, status and model pill updated, key absent from the page and its state, removed, Keychain empty afterwards). The Windows path runs for real in the automated tests on the Windows machines. **Not verified:** a real Anthropic key making a real request; the Linux keyring for real (the tests fake `secret-tool`); a locked Keychain.
